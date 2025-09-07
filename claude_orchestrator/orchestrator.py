@@ -190,6 +190,9 @@ class MilestoneOrchestrator:
     def __init__(self, config_path: str = "orchestrator.config.json"):
         self.config = self.load_config(config_path)
         
+        # Set project directory (where orchestrator is run from)
+        self.project_dir = os.getcwd()
+        
         # Override base_branch with current branch
         current_branch = self.get_current_branch()
         self.config["git"]["base_branch"] = current_branch
@@ -204,7 +207,7 @@ class MilestoneOrchestrator:
         )
         self.system_monitor = SystemMonitor()
         self.worktree_manager = WorktreeManager()
-        self.claude_wrapper = ClaudeCodeWrapper(config=self.config)
+        self.claude_wrapper = ClaudeCodeWrapper(config=self.config, project_dir=self.project_dir)
         self.validator = MilestoneValidator()
         self.preprocessor = MilestonePreprocessor()
         

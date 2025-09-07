@@ -350,7 +350,11 @@ class WorktreeManager:
 class ClaudeCodeWrapper:
     """Wrapper for Claude Code CLI interactions"""
     
-    def __init__(self, claude_path: str = "claude", config: Dict = None):
+    def __init__(self, claude_path: str = "claude", config: Dict = None, project_dir: str = None):
+        import os
+        # Store project directory for file validation
+        self.project_dir = project_dir or os.getcwd()
+        
         # Try to find the full path to claude command
         import shutil
         if claude_path == "claude":
@@ -715,13 +719,16 @@ START IMPLEMENTATION IMMEDIATELY using file creation tools and specialized subag
             import subprocess
             import os
             
+            # Use the project directory for git status check, not the orchestrator directory
+            project_dir = self.project_dir
+            
             # Check if we're in a git repository and have changes
             git_result = subprocess.run(
                 ['git', 'status', '--porcelain'],
                 capture_output=True,
                 text=True,
                 timeout=10,
-                cwd=os.getcwd()
+                cwd=project_dir
             )
             
             if git_result.returncode == 0 and git_result.stdout.strip():
