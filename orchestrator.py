@@ -29,6 +29,76 @@ from advanced import (
     ClaudeCodeWrapper,
     MilestoneValidator
 )
+from milestone_preprocessor import MilestonePreprocessor
+
+def setup_windows_console():
+    """Setup console encoding for Windows to handle Unicode characters"""
+    if sys.platform.startswith('win'):
+        try:
+            # Try to enable UTF-8 mode for Windows console
+            import codecs
+            sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())
+            sys.stderr = codecs.getwriter('utf-8')(sys.stderr.detach())
+        except (AttributeError, OSError):
+            # Fallback if UTF-8 setup fails
+            pass
+    return True
+
+def safe_unicode_print(text, fallback_symbols=None):
+    """
+    Print text with Unicode characters, falling back to ASCII alternatives on Windows
+    if Unicode encoding fails.
+    
+    Args:
+        text: The text to print
+        fallback_symbols: Dict mapping Unicode chars to ASCII alternatives
+    """
+    if fallback_symbols is None:
+        fallback_symbols = {
+            '✅': '[OK]',
+            '❌': '[FAIL]',
+            '⚠️': '[WARN]',
+            '🔍': '[INFO]'
+        }
+    
+    if sys.platform.startswith('win'):
+        try:
+            print(text)
+        except UnicodeEncodeError:
+            # Replace Unicode characters with ASCII alternatives
+            safe_text = text
+            for unicode_char, ascii_alt in fallback_symbols.items():
+                safe_text = safe_text.replace(unicode_char, ascii_alt)
+            print(safe_text)
+    else:
+        print(text)
+
+def get_safe_unicode_string(text, fallback_symbols=None):
+    """
+    Return a safe Unicode string with fallback symbols for Windows compatibility.
+    
+    Args:
+        text: The text to process
+        fallback_symbols: Dict mapping Unicode chars to ASCII alternatives
+    Returns:
+        Safe string that can be displayed on Windows console
+    """
+    if fallback_symbols is None:
+        fallback_symbols = {
+            '✅': '[OK]',
+            '❌': '[FAIL]',
+            '⚠️': '[WARN]',
+            '🔍': '[INFO]'
+        }
+    
+    if sys.platform.startswith('win'):
+        # Always use safe alternatives on Windows for consistency
+        safe_text = text
+        for unicode_char, ascii_alt in fallback_symbols.items():
+            safe_text = safe_text.replace(unicode_char, ascii_alt)
+        return safe_text
+    else:
+        return text
 
 class OrchestratorState:
     """Manages orchestrator state and persistence"""
@@ -136,6 +206,7 @@ class MilestoneOrchestrator:
         self.worktree_manager = WorktreeManager()
         self.claude_wrapper = ClaudeCodeWrapper()
         self.validator = MilestoneValidator()
+        self.preprocessor = MilestonePreprocessor()
         
         # Setup logging
         self.setup_logging()
@@ -234,6 +305,9 @@ class MilestoneOrchestrator:
             "notifications": {
                 "enabled": False,
                 "webhook_url": ""
+            },
+            "advanced": {
+                "enable_system_monitoring": True
             }
         }
     
@@ -283,30 +357,37 @@ class MilestoneOrchestrator:
     def parse_milestone_file(self, filepath: Path) -> Optional[Dict]:
         """Parse a milestone file and extract tasks"""
         try:
-            content = filepath.read_text(encoding='utf-8')
+            # Preprocess the milestone to normalize its format
+            logging.info(f"Preprocessing milestone file: {filepath}")
+            normalized_content = self.preprocessor.preprocess_milestone(filepath)
             
-            # Extract milestone metadata
+            # Extract milestone metadata from normalized content
             milestone_id = filepath.stem
-            title_match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
+            title_match = re.search(r'^#\s+(.+)$', normalized_content, re.MULTILINE)
             title = title_match.group(1) if title_match else milestone_id
             
-            # Extract description
-            desc_match = re.search(r'^#\s+.+\n\n(.+?)(?=\n##|\n```|\Z)', content, re.MULTILINE | re.DOTALL)
+            # Extract description (everything before first ##)
+            desc_match = re.search(r'^#\s+.+?\n\n(.+?)(?=\n##|\Z)', normalized_content, re.MULTILINE | re.DOTALL)
             description = desc_match.group(1).strip() if desc_match else ""
             
-            # Extract tasks
-            tasks = self.extract_tasks_from_content(content, milestone_id)
+            # Extract tasks using the normalized format
+            tasks = self.extract_tasks_from_content(normalized_content, milestone_id)
             
             # Extract dependencies
-            deps_match = re.search(r'## Dependencies\n(.+?)(?=\n##|\Z)', content, re.MULTILINE | re.DOTALL)
+            deps_match = re.search(r'## Dependencies\n(.+?)(?=\n##|\Z)', normalized_content, re.MULTILINE | re.DOTALL)
             dependencies = []
             if deps_match:
                 deps_text = deps_match.group(1)
-                dependencies = re.findall(r'- (.+)', deps_text)
+                # Handle "None specified" case
+                if "None specified" not in deps_text:
+                    dependencies = re.findall(r'- (.+)', deps_text)
             
             # Extract stage information
-            stage_match = re.search(r'Stage:\s*(\d+)', content, re.IGNORECASE)
+            stage_match = re.search(r'Stage:\s*(\d+)', normalized_content, re.IGNORECASE)
             stage = int(stage_match.group(1)) if stage_match else 1
+            
+            # Log preprocessing success
+            logging.info(f"Successfully preprocessed {milestone_id}: {len(tasks)} tasks extracted")
             
             return {
                 "id": milestone_id,
@@ -766,9 +847,9 @@ class MilestoneOrchestrator:
             entry += f"**Tasks:** {successful_tasks}/{total_tasks} successful\n"
             
             if successful_tasks == total_tasks:
-                entry += "**Status:** ✅ COMPLETED\n\n"
+                entry += "**Status:** [SUCCESS] COMPLETED\n\n"
             else:
-                entry += "**Status:** ⚠️ PARTIALLY COMPLETED\n\n"
+                entry += "**Status:** [PARTIAL] PARTIALLY COMPLETED\n\n"
             
             # Update file
             content += entry
@@ -829,6 +910,9 @@ class MilestoneOrchestrator:
 
 def main():
     """Main entry point"""
+    # Setup Windows console for Unicode handling
+    setup_windows_console()
+    
     parser = argparse.ArgumentParser(description="Claude Code Milestone Orchestrator")
     parser.add_argument("--config", default="orchestrator.config.json",
                       help="Configuration file path")
@@ -887,13 +971,13 @@ def main():
                 try:
                     result = orchestrator.validator.validate_milestone_structure(milestone)
                     validation_results.append(result)
-                    status = "✅" if result.valid else "❌"
+                    status = "[OK]" if result.valid else "[FAIL]"
                     print(f"{status} {milestone['id']}: {milestone['title']}")
                     if not result.valid:
                         for error in result.errors:
                             print(f"   - {error}")
                 except Exception as e:
-                    print(f"❌ {milestone['id']}: Validation failed - {e}")
+                    print(f"[FAIL] {milestone['id']}: Validation failed - {e}")
             
             valid_count = sum(1 for r in validation_results if r.valid)
             print(f"\nValidation complete: {valid_count}/{len(milestones)} valid")

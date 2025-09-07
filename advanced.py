@@ -461,16 +461,46 @@ class ClaudeCodeWrapper:
     
     def _prepare_task_prompt(self, task: Dict[str, Any]) -> str:
         """Prepare Claude Code prompt for task"""
-        prompt = f"""Task: {task['title']}
+        task_title = task['title']
+        requirements = task.get('requirements', 'No specific requirements provided')
+        acceptance_criteria = task.get('acceptance_criteria', 'No specific criteria provided')
+        task_id = task.get('id', 'unknown')
+        milestone_id = task.get('milestone_id', 'unknown')
+        
+        # Generate specific, actionable prompt that instructs Claude CLI to create files
+        prompt = f"""You must implement: {task_title}
 
-Requirements:
-{task.get('requirements', 'No specific requirements provided')}
+TASK ID: {task_id}
+MILESTONE: {milestone_id}
 
-Acceptance Criteria:
-{task.get('acceptance_criteria', 'No specific criteria provided')}
+REQUIREMENTS:
+{requirements}
 
-Please implement this task following best practices. Ensure all code is properly tested and documented.
-"""
+ACCEPTANCE CRITERIA:
+{acceptance_criteria}
+
+CRITICAL INSTRUCTIONS:
+1. You MUST create actual files using Write, Edit, or MultiEdit tools
+2. You MUST NOT just provide code examples or explanations
+3. File creation is REQUIRED for this task to be considered complete
+4. Use appropriate file paths based on the project structure
+
+SPECIFIC ACTIONS REQUIRED:
+- If this is a component task, create the component file in the appropriate directory (e.g., src/components/)
+- If this involves configuration, create or modify configuration files
+- If this involves tests, create test files in the appropriate test directory
+- If this involves documentation, create or update relevant documentation files
+
+IMPLEMENTATION STEPS:
+1. Analyze the current project structure using available tools
+2. Determine the exact file paths needed for implementation
+3. Create or modify files using Write/Edit/MultiEdit tools
+4. Ensure all created files follow the project's conventions and structure
+5. Verify that your implementation meets all requirements and acceptance criteria
+
+IMPORTANT: This task will ONLY be marked as successful if you actually create or modify files. Simply acknowledging the task or providing code snippets without creating files will result in task failure.
+
+Begin implementation now using the appropriate file creation tools."""
         
         return prompt
     
@@ -546,7 +576,7 @@ Please implement this task following best practices. Ensure all code is properly
             "Task completed successfully",
             "Implementation complete",
             "All tests passing",
-            "✅",
+            "[SUCCESS]",
             "Success"
         ]
         
@@ -555,7 +585,7 @@ Please implement this task following best practices. Ensure all code is properly
             "Error:",
             "Failed:",
             "Exception:",
-            "❌",
+            "[ERROR]",
             "FAILED"
         ]
         
@@ -595,9 +625,9 @@ class MilestoneValidator:
             if field not in milestone or not milestone[field]:
                 result.add_error(f"Missing required field: {field}")
         
-        # Validate milestone ID format
+        # Validate milestone ID format (more flexible)
         milestone_id = milestone.get("id", "")
-        if not re.match(r'^[A-Z0-9]+[A-Z]?$', milestone_id):
+        if not re.match(r'^[a-zA-Z0-9-_]+$', milestone_id):
             result.add_error(f"Invalid milestone ID format: {milestone_id}")
         
         # Check description length
@@ -634,9 +664,9 @@ class MilestoneValidator:
             if field not in task or not task[field]:
                 result.add_error(f"Task {index}: Missing required field: {field}")
         
-        # Validate task ID format
+        # Validate task ID format (more flexible)
         task_id = task.get("id", "")
-        if not re.match(r'^[A-Z0-9]+-T\d+$', task_id):
+        if not re.match(r'^[a-zA-Z0-9-_]+-T\d+$', task_id):
             result.add_error(f"Task {index}: Invalid task ID format: {task_id}")
         
         # Validate priority
