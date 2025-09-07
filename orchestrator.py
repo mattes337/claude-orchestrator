@@ -659,10 +659,11 @@ class MilestoneOrchestrator:
                 # Rate limiting
                 self.rate_limiter.wait_if_needed()
                 
-                # System resource check
-                if not self.system_monitor.check_resources():
-                    logging.warning("System resources low, waiting...")
-                    time.sleep(30)
+                # System resource check (only if enabled)
+                if self.config["advanced"]["enable_system_monitoring"]:
+                    if not self.system_monitor.check_resources():
+                        logging.warning("System resources low, waiting...")
+                        time.sleep(30)
                 
                 # Execute task
                 if self.verbose:
@@ -683,7 +684,14 @@ class MilestoneOrchestrator:
                     logging.info(f"Task {task_id} completed successfully (attempt {attempt + 1})")
                     return result
                 else:
-                    logging.warning(f"Task {task_id} failed (attempt {attempt + 1}): {result.error}")
+                    error_details = f"Task {task_id} failed (attempt {attempt + 1}): {result.error}"
+                    logging.warning(error_details)
+                    
+                    # Print error details in verbose mode
+                    if self.verbose:
+                        print(f"      [ERR] {error_details}")
+                        if hasattr(result, 'output') and result.output:
+                            print(f"      Output: {result.output[:200]}...")  # First 200 chars
                     
                     if attempt < max_retries:
                         wait_time = retry_delay * (2 ** attempt)  # Exponential backoff

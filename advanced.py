@@ -403,9 +403,11 @@ class ClaudeCodeWrapper:
         from orchestrator import TaskResult  # Avoid circular import
         
         if not self.is_available:
+            error_msg = f"Claude Code CLI not available at path: {self.claude_path}"
+            logging.error(error_msg)
             return TaskResult(
                 task["id"], False, 
-                error="Claude Code CLI not available"
+                error=error_msg
             )
         
         task_id = task["id"]
@@ -490,6 +492,7 @@ Please implement this task following best practices. Ensure all code is properly
                 import platform
                 use_shell = platform.system() == "Windows"
                 
+                logging.debug(f"Executing Claude command: {' '.join(cmd)}")
                 result = subprocess.run(
                     cmd,
                     capture_output=True,
@@ -500,6 +503,10 @@ Please implement this task following best practices. Ensure all code is properly
                     encoding='utf-8',
                     errors='replace'  # Replace invalid characters instead of failing
                 )
+                
+                logging.debug(f"Command completed with return code: {result.returncode}")
+                if result.stderr:
+                    logging.debug(f"Command stderr: {result.stderr[:200]}")
                 
                 return {
                     "returncode": result.returncode,
