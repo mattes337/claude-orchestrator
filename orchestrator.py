@@ -102,6 +102,12 @@ class MilestoneOrchestrator:
     
     def __init__(self, config_path: str = "orchestrator.config.json"):
         self.config = self.load_config(config_path)
+        
+        # Override base_branch with current branch
+        current_branch = self.get_current_branch()
+        self.config["git"]["base_branch"] = current_branch
+        logging.info(f"Using current branch as base: {current_branch}")
+        
         self.state = OrchestratorState()
         
         # Initialize components
@@ -133,6 +139,38 @@ class MilestoneOrchestrator:
         logging.info(f"Received signal {signum}, initiating graceful shutdown...")
         self.shutdown_requested = True
         self.state.add_log_entry(f"Shutdown signal received: {signum}")
+        
+        # Shutdown the thread pool executor to cancel running tasks
+        if hasattr(self, 'executor') and self.executor:
+            logging.info("Shutting down thread pool executor...")
+            self.executor.shutdown(wait=False, cancel_futures=True)
+            
+        # Force exit after a short delay if graceful shutdown doesn't work
+        import threading
+        def force_exit():
+            import time
+            time.sleep(2)  # Give graceful shutdown a chance
+            if self.shutdown_requested:
+                logging.warning("Forcing exit due to shutdown timeout")
+                os._exit(130)  # Exit code for SIGINT
+        
+        force_exit_thread = threading.Thread(target=force_exit, daemon=True)
+        force_exit_thread.start()
+    
+    def get_current_branch(self) -> str:
+        """Get the current git branch"""
+        try:
+            result = subprocess.run(
+                ["git", "branch", "--show-current"],
+                capture_output=True, text=True, check=True
+            )
+            return result.stdout.strip()
+        except subprocess.CalledProcessError:
+            logging.warning("Failed to get current branch, falling back to 'main'")
+            return "main"
+        except Exception as e:
+            logging.warning(f"Error getting current branch: {e}, falling back to 'main'")
+            return "main"
     
     def load_config(self, config_path: str) -> Dict:
         """Load configuration from file"""
@@ -379,27 +417,37 @@ class MilestoneOrchestrator:
                 for milestone in milestones
             }
             
-            for future in as_completed(future_to_milestone):
-                if self.shutdown_requested:
-                    break
-                
-                milestone = future_to_milestone[future]
+            # Use timeout to allow checking shutdown_requested more frequently
+            while future_to_milestone and not self.shutdown_requested:
                 try:
-                    result = future.result()
-                    stage_results.append(result)
-                    
-                    if result["success"]:
-                        logging.info(f"Milestone {milestone['id']} completed successfully")
-                    else:
-                        logging.error(f"Milestone {milestone['id']} failed: {result.get('error', 'Unknown error')}")
-                
-                except Exception as e:
-                    logging.error(f"Milestone {milestone['id']} execution exception: {e}")
-                    stage_results.append({
-                        "milestone_id": milestone["id"],
-                        "success": False,
-                        "error": str(e)
-                    })
+                    for future in as_completed(future_to_milestone, timeout=1.0):
+                        if self.shutdown_requested:
+                            # Cancel remaining futures
+                            for remaining_future in future_to_milestone:
+                                remaining_future.cancel()
+                            break
+                        
+                        milestone = future_to_milestone.pop(future)
+                        try:
+                            result = future.result()
+                            stage_results.append(result)
+                            
+                            if result["success"]:
+                                logging.info(f"Milestone {milestone['id']} completed successfully")
+                            else:
+                                logging.error(f"Milestone {milestone['id']} failed: {result.get('error', 'Unknown error')}")
+                        
+                        except Exception as e:
+                            logging.error(f"Milestone {milestone['id']} execution exception: {e}")
+                            stage_results.append({
+                                "milestone_id": milestone["id"],
+                                "success": False,
+                                "error": str(e)
+                            })
+                        break  # Process one future at a time
+                except TimeoutError:
+                    # Timeout allows us to check shutdown_requested
+                    continue
         
         # Analyze stage results
         stage_duration = time.time() - stage_start_time
@@ -514,17 +562,27 @@ class MilestoneOrchestrator:
                 for task in tasks
             }
             
-            for future in as_completed(future_to_task):
-                if self.shutdown_requested:
-                    break
-                
-                task = future_to_task[future]
+            # Use timeout to allow checking shutdown_requested more frequently
+            while future_to_task and not self.shutdown_requested:
                 try:
-                    result = future.result()
-                    results.append(result)
-                except Exception as e:
-                    logging.error(f"Task {task['id']} execution exception: {e}")
-                    results.append(TaskResult(task["id"], False, error=str(e)))
+                    for future in as_completed(future_to_task, timeout=1.0):
+                        if self.shutdown_requested:
+                            # Cancel remaining futures
+                            for remaining_future in future_to_task:
+                                remaining_future.cancel()
+                            break
+                        
+                        task = future_to_task.pop(future)
+                        try:
+                            result = future.result()
+                            results.append(result)
+                        except Exception as e:
+                            logging.error(f"Task {task['id']} execution exception: {e}")
+                            results.append(TaskResult(task["id"], False, error=str(e)))
+                        break  # Process one future at a time
+                except TimeoutError:
+                    # Timeout allows us to check shutdown_requested
+                    continue
         
         return results
     
