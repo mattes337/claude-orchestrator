@@ -369,13 +369,52 @@ Add user authentication and authorization.
 - Add password reset functionality
 ```
 
+#### Format 4: Issues to Fix (Bug Fixes)
+```markdown
+# Milestone 1C - Slash Menu Bug Fixes
+
+## Overview
+This milestone addresses critical bugs in the slash menu functionality that prevent proper item insertion and image integration.
+
+## Issues to Fix
+
+### 1. Slash Menu Arrow Key Navigation Bug
+**Problem**: When using the slash menu and navigating with arrow keys (down arrow), pressing Enter inserts a plain newline instead of the selected menu item.
+
+**Expected Behavior**: Pressing Enter after navigating with arrow keys should insert the currently highlighted/selected menu item.
+
+**Current Behavior**: A plain newline character is written to the editor instead of executing the menu item action.
+
+### 2. AI Image Generation Not Working via Slash Menu
+**Problem**: AI image generation feature does not open or add images when accessed through the slash menu.
+
+**Expected Behavior**: Selecting AI image generation from the slash menu should open the AI image generation interface and allow users to generate and insert images.
+
+**Current Behavior**: The AI image generation option in the slash menu is non-functional.
+
+### 3. Image Browser Not Working via Slash Menu
+**Problem**: Image browser does not open or add images when accessed through the slash menu.
+
+**Expected Behavior**: Selecting the image browser from the slash menu should open the file browser interface and allow users to select and insert existing images.
+
+**Current Behavior**: The image browser option in the slash menu is non-functional.
+
+## Acceptance Criteria
+- [ ] Slash menu arrow key navigation works correctly - pressing Enter after using arrow keys inserts the selected item
+- [ ] AI image generation opens and functions properly when accessed via slash menu
+- [ ] Image browser opens and functions properly when accessed via slash menu
+- [ ] All existing slash menu functionality remains intact
+- [ ] No regressions introduced to other editor features
+```
+
 ### Automatic Task Extraction
 
 The preprocessing system automatically:
 
 - **Detects Task Sections**: Finds `## Task N:`, `## Task N -`, or numbered sections
 - **Converts Requirements**: Transforms technical requirements into executable tasks
-- **Extracts Objectives**: Uses objective lists as fallback tasks
+- **Extracts Objectives**: Uses objective lists as fallback tasks  
+- **Processes Bug Reports**: Converts "Issues to Fix" sections with Problem/Expected structure into high-priority tasks
 - **Normalizes Format**: Ensures consistent structure for the orchestrator
 - **Preserves Content**: Maintains all original information and context
 
@@ -416,6 +455,7 @@ Create the foundational project structure and configuration.
 - **Specific Deliverables**: Define concrete outputs for each task
 - **Proper Dependencies**: Document milestone relationships
 - **Realistic Estimates**: Provide time estimates when possible
+- **Bug Fix Format**: Use "Issues to Fix" with **Problem** and **Expected Behavior** for bug tracking
 - **Any Format**: Use whatever markdown structure works best for your team!
 
 ## 🔄 Complete Execution Flow
@@ -588,10 +628,12 @@ For issues or questions:
 
 ### **Milestone Preprocessor**
 - **Universal Format Support**: Automatically detects and normalizes any milestone format
-- **Smart Task Extraction**: Converts various structures (Tasks, Requirements, Objectives) into executable units
-- **Pattern Recognition**: Supports multiple task definition patterns (`## Task N:`, `### N.`, etc.)
+- **Smart Task Extraction**: Converts various structures (Tasks, Requirements, Objectives, Issues) into executable units
+- **Pattern Recognition**: Supports multiple task definition patterns (`## Task N:`, `### N.`, `## Issues to Fix`, etc.)
+- **Bug Fix Processing**: Specialized handling of "Issues to Fix" format with Problem/Expected Behavior extraction
 - **Content Preservation**: Maintains all original milestone information and context
 - **Backward Compatibility**: Works seamlessly with existing milestone files
+- **Intelligent Prioritization**: Automatically assigns high priority to bug fixes and critical issues
 
 ### **System Management**
 - **Rate Limit Manager**: Tracks API limits, implements exponential backoff, persists state for resumption
