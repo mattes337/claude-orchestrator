@@ -257,7 +257,7 @@ class SystemMonitor:
 class WorktreeManager:
     """Manages git worktrees for parallel development"""
     
-    def __init__(self, base_dir: str = "worktrees"):
+    def __init__(self, base_dir: str = ".worktrees"):
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(exist_ok=True)
         self.active_worktrees = {}
@@ -294,7 +294,7 @@ class WorktreeManager:
         
         try:
             # Create new branch
-            branch_name = f"feature/{worktree_name}"
+            branch_name = f"milestone/{name}"
             subprocess.run(
                 ["git", "checkout", base_branch],
                 check=True, capture_output=True,
