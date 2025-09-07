@@ -389,8 +389,9 @@ class MilestoneOrchestrator:
             desc_match = re.search(r'^#\s+.+?\n\n(.+?)(?=\n##|\Z)', normalized_content, re.MULTILINE | re.DOTALL)
             description = desc_match.group(1).strip() if desc_match else ""
             
-            # Extract tasks using the normalized format
-            tasks = self.extract_tasks_from_content(normalized_content, milestone_id)
+            # Extract tasks using the preprocessor's intelligent extraction
+            original_content = filepath.read_text(encoding='utf-8')
+            tasks = self.preprocessor.extract_tasks(original_content, milestone_id)
             
             # Extract dependencies
             deps_match = re.search(r'## Dependencies\n(.+?)(?=\n##|\Z)', normalized_content, re.MULTILINE | re.DOTALL)

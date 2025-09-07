@@ -27,7 +27,9 @@ from .advanced import (
     SystemMonitor,
     WorktreeManager,
     ClaudeCodeWrapper,
-    MilestoneValidator
+    MilestoneValidator,
+    CodeReviewManager,
+    CodeReviewResult
 )
 from .milestone_preprocessor import MilestonePreprocessor
 
@@ -190,9 +192,6 @@ class MilestoneOrchestrator:
     def __init__(self, config_path: str = "orchestrator.config.json"):
         self.config = self.load_config(config_path)
         
-        # Set project directory (where orchestrator is run from)
-        self.project_dir = os.getcwd()
-        
         # Override base_branch with current branch
         current_branch = self.get_current_branch()
         self.config["git"]["base_branch"] = current_branch
@@ -207,9 +206,10 @@ class MilestoneOrchestrator:
         )
         self.system_monitor = SystemMonitor()
         self.worktree_manager = WorktreeManager()
-        self.claude_wrapper = ClaudeCodeWrapper(config=self.config, project_dir=self.project_dir)
+        self.claude_wrapper = ClaudeCodeWrapper()
         self.validator = MilestoneValidator()
         self.preprocessor = MilestonePreprocessor()
+        self.code_reviewer = CodeReviewManager(self.claude_wrapper, self.config)
         
         # Setup logging
         self.setup_logging()
@@ -285,7 +285,7 @@ class MilestoneOrchestrator:
             "milestones_dir": "milestones",
             "tasks_file": "TASKS.md",
             "execution": {
-                "max_parallel_tasks": 6,  # Increase for better parallelism with subagents
+                "max_parallel_tasks": 4,
                 "task_timeout": 1800,
                 "max_retries": 3,
                 "retry_delay": 30
@@ -295,12 +295,6 @@ class MilestoneOrchestrator:
                 "burst_limit": 10,
                 "backoff_multiplier": 2
             },
-            "claude": {
-                "model": "sonnet",
-                "plan_model": "opus", 
-                "dev_model": "sonnet",
-                "timeout": 1800
-            },
             "git": {
                 "use_worktrees": True,
                 "base_branch": "main",
@@ -309,7 +303,23 @@ class MilestoneOrchestrator:
             "code_review": {
                 "enabled": True,
                 "auto_fix": True,
-                "quality_threshold": 0.8
+                "quality_threshold": 0.8,
+                "max_iterations": 3
+            },
+            "mcp_servers": {
+                "enabled": True,
+                "context7": {
+                    "enabled": True,
+                    "use_for": ["documentation", "research", "context"]
+                },
+                "playwright": {
+                    "enabled": True,
+                    "use_for": ["browser_testing", "e2e_testing", "ui_testing"]
+                },
+                "aceternity": {
+                    "enabled": True,
+                    "use_for": ["ui_design", "components", "styling"]
+                }
             },
             "notifications": {
                 "enabled": False,
@@ -349,29 +359,18 @@ class MilestoneOrchestrator:
         if not milestones_dir.exists():
             raise FileNotFoundError(f"Milestones directory not found: {milestones_dir}")
         
-        print(f"🔍 Discovering milestones in: {milestones_dir}")
-        milestone_files = list(milestones_dir.glob("*.md"))
-        if self.verbose:
-            print(f"  Found {len(milestone_files)} milestone files:")
-            for file in milestone_files:
-                print(f"    - {file.name}")
-        
         milestones = []
-        for milestone_file in milestone_files:
+        for milestone_file in milestones_dir.glob("*.md"):
             try:
-                if not self.verbose:
-                    print(f"  📄 Processing {milestone_file.name}...")
                 milestone = self.parse_milestone_file(milestone_file)
                 if milestone:
                     milestones.append(milestone)
             except Exception as e:
                 logging.error(f"Failed to parse milestone {milestone_file}: {e}")
-                print(f"  ❌ Failed to parse {milestone_file.name}: {e}")
         
         # Sort by milestone ID
         milestones.sort(key=lambda x: x["id"])
         logging.info(f"Discovered {len(milestones)} milestones")
-        print(f"✅ Successfully loaded {len(milestones)} milestones")
         return milestones
     
     def parse_milestone_file(self, filepath: Path) -> Optional[Dict]:
@@ -379,8 +378,6 @@ class MilestoneOrchestrator:
         try:
             # Preprocess the milestone to normalize its format
             logging.info(f"Preprocessing milestone file: {filepath}")
-            if self.verbose:
-                print(f"    Preprocessing {filepath.name}...")
             normalized_content = self.preprocessor.preprocess_milestone(filepath)
             
             # Extract milestone metadata from normalized content
@@ -392,8 +389,9 @@ class MilestoneOrchestrator:
             desc_match = re.search(r'^#\s+.+?\n\n(.+?)(?=\n##|\Z)', normalized_content, re.MULTILINE | re.DOTALL)
             description = desc_match.group(1).strip() if desc_match else ""
             
-            # Extract tasks using the normalized format
-            tasks = self.extract_tasks_from_content(normalized_content, milestone_id)
+            # Extract tasks using the preprocessor's intelligent extraction
+            original_content = filepath.read_text(encoding='utf-8')
+            tasks = self.preprocessor.extract_tasks(original_content, milestone_id)
             
             # Extract dependencies
             deps_match = re.search(r'## Dependencies\n(.+?)(?=\n##|\Z)', normalized_content, re.MULTILINE | re.DOTALL)
@@ -410,12 +408,6 @@ class MilestoneOrchestrator:
             
             # Log preprocessing success
             logging.info(f"Successfully preprocessed {milestone_id}: {len(tasks)} tasks extracted")
-            if self.verbose:
-                print(f"    ✓ Preprocessed {milestone_id}: {len(tasks)} tasks extracted")
-                for i, task in enumerate(tasks[:3]):  # Show first 3 tasks
-                    print(f"      - Task {i+1}: {task.get('title', task.get('id', 'Unnamed'))}")
-                if len(tasks) > 3:
-                    print(f"      ... and {len(tasks) - 3} more tasks")
             
             return {
                 "id": milestone_id,
@@ -502,16 +494,6 @@ class MilestoneOrchestrator:
         print(f"   Milestones: {len(milestones)}")
         print(f"   Stages: {len(stages)}")
         if self.verbose:
-            print(f"   Configuration: {self.config.get('execution', {})}")
-            print(f"   Rate Limiting: {self.config.get('rate_limit', {})}")
-            print(f"   Git Worktrees: {self.config['git']['use_worktrees']}")
-            print(f"   Parallel Execution: ✓ ({self.max_workers} workers)")
-            print(f"   Subagent Optimization: ✓ (typescript-expert, react-expert, ui-designer, testing-expert, etc.)")
-            for stage_num, stage_milestones in stages.items():
-                print(f"   Stage {stage_num}: {len(stage_milestones)} milestones")
-                for milestone in stage_milestones:
-                    print(f"     - {milestone['id']}: {milestone['title']} ({len(milestone['tasks'])} tasks)")
-        else:
             for stage_num, stage_milestones in stages.items():
                 print(f"   Stage {stage_num}: {len(stage_milestones)} milestones")
         print()
@@ -528,19 +510,6 @@ class MilestoneOrchestrator:
                     continue
                 
                 print(f">> Executing Stage {stage_num} ({len(stages[stage_num])} milestones)")
-                if self.verbose:
-                    print(f"   Stage {stage_num} details:")
-                    for milestone in stages[stage_num]:
-                        print(f"     - Milestone: {milestone['id']}")
-                        print(f"       Title: {milestone['title']}")
-                        print(f"       Tasks: {len(milestone['tasks'])}")
-                        if milestone.get('dependencies'):
-                            print(f"       Dependencies: {milestone['dependencies']}")
-                        for i, task in enumerate(milestone['tasks'][:3]):  # Show first 3 tasks
-                            print(f"         Task {i+1}: {task.get('title', task.get('id', 'Unnamed'))}")
-                        if len(milestone['tasks']) > 3:
-                            print(f"         ... and {len(milestone['tasks']) - 3} more tasks")
-                    print()
                 success = self.execute_stage(stage_num, stages[stage_num])
                 if not success:
                     print(f"[FAILED] Stage {stage_num} failed, stopping execution")
@@ -652,6 +621,28 @@ class MilestoneOrchestrator:
         
         if not stage_success:
             logging.error(f"Stage {stage_num} failed with success rate {success_rate:.1%}")
+            return stage_success
+        
+        # If stage was successful and using worktrees, merge them sequentially
+        if stage_success and self.config["git"]["use_worktrees"]:
+            merge_success = self.merge_stage_worktrees(stage_num, milestones)
+            if not merge_success:
+                logging.error(f"Stage {stage_num} worktree merging failed")
+                return False
+        
+        # Conduct final stage code review after merging
+        if stage_success and self.config.get("code_review", {}).get("enabled", True):
+            stage_review_result = self.conduct_stage_code_review(stage_num, milestones)
+            if not stage_review_result.success and stage_review_result.has_quality_issues:
+                logging.error(f"Stage {stage_num} failed final code review")
+                return False
+        
+        # Commit the complete stage to the root branch
+        if stage_success:
+            commit_success = self.commit_stage_completion(stage_num, milestones)
+            if not commit_success:
+                logging.warning(f"Failed to commit stage {stage_num} completion")
+                # Don't fail the stage for commit issues, just warn
         
         return stage_success
     
@@ -669,6 +660,183 @@ class MilestoneOrchestrator:
             except Exception as e:
                 logging.warning(f"Failed to create worktree for {milestone['id']}: {e}")
     
+    def merge_stage_worktrees(self, stage_num: int, milestones: List[Dict]) -> bool:
+        """Merge worktrees sequentially into the root branch"""
+        logging.info(f"Merging worktrees for stage {stage_num}")
+        
+        if self.verbose:
+            print(f"  → Merging {len(milestones)} worktrees into root branch...")
+        
+        successful_merges = 0
+        
+        for milestone in milestones:
+            milestone_id = milestone["id"]
+            worktree_path = self.state.state.get("worktree_paths", {}).get(milestone_id)
+            
+            if not worktree_path:
+                logging.warning(f"No worktree path found for milestone {milestone_id}")
+                continue
+            
+            try:
+                # Get the branch name for this worktree
+                worktree_info = self.worktree_manager.get_worktree_info(milestone_id)
+                if not worktree_info:
+                    logging.warning(f"No worktree info found for {milestone_id}")
+                    continue
+                
+                branch_name = worktree_info["branch"]
+                
+                # Switch to base branch and merge the feature branch
+                base_branch = self.config["git"]["base_branch"]
+                
+                merge_result = subprocess.run([
+                    "git", "checkout", base_branch
+                ], capture_output=True, text=True, encoding='utf-8', errors='replace')
+                
+                if merge_result.returncode != 0:
+                    logging.error(f"Failed to checkout base branch {base_branch}: {merge_result.stderr}")
+                    continue
+                
+                merge_result = subprocess.run([
+                    "git", "merge", "--no-ff", branch_name, 
+                    "-m", f"Merge milestone {milestone_id}: {milestone['title']}"
+                ], capture_output=True, text=True, encoding='utf-8', errors='replace')
+                
+                if merge_result.returncode == 0:
+                    successful_merges += 1
+                    logging.info(f"Successfully merged {milestone_id}")
+                    
+                    if self.verbose:
+                        print(f"    [MERGED] {milestone_id}: {milestone['title']}")
+                else:
+                    logging.error(f"Failed to merge {milestone_id}: {merge_result.stderr}")
+                    if self.verbose:
+                        print(f"    [MERGE_FAIL] {milestone_id}: {merge_result.stderr[:100]}")
+            
+            except Exception as e:
+                logging.error(f"Exception during merge of {milestone_id}: {e}")
+                if self.verbose:
+                    print(f"    [ERROR] {milestone_id}: {str(e)}")
+        
+        merge_success = successful_merges >= len(milestones) * 0.8  # At least 80% successful
+        
+        if merge_success:
+            logging.info(f"Stage {stage_num} worktree merging completed: {successful_merges}/{len(milestones)} successful")
+        else:
+            logging.error(f"Stage {stage_num} worktree merging failed: only {successful_merges}/{len(milestones)} successful")
+        
+        return merge_success
+    
+    def conduct_stage_code_review(self, stage_num: int, milestones: List[Dict]) -> CodeReviewResult:
+        """Conduct comprehensive code review for entire stage after merging"""
+        logging.info(f"Conducting final code review for stage {stage_num}")
+        
+        if self.verbose:
+            print(f"  → Running final code review for stage {stage_num}...")
+        
+        stage_id = f"stage-{stage_num}"
+        
+        try:
+            # Conduct stage-level code review (no worktree path since we're in main branch now)
+            review_result = self.code_reviewer.conduct_code_review(
+                stage_id, 
+                worktree_path=None,  # Use main branch 
+                review_type="stage"
+            )
+            
+            if self.verbose:
+                status = "[OK]" if review_result.success and not review_result.has_quality_issues else "[NEEDS_WORK]"
+                print(f"      {status} Stage code review completed - Score: {review_result.quality_score:.2f}, Iterations: {review_result.iterations_completed}")
+                
+                if review_result.has_quality_issues:
+                    if review_result.todos_found:
+                        print(f"           TODOs found: {len(review_result.todos_found)}")
+                    if review_result.quality_gates_failed:
+                        print(f"           Quality gates failed: {len(review_result.quality_gates_failed)}")
+            
+            return review_result
+            
+        except Exception as e:
+            logging.error(f"Stage code review failed for stage {stage_num}: {e}")
+            return CodeReviewResult(
+                success=False,
+                quality_score=0.0,
+                todos_found=[],
+                quality_gates_failed=[f"Stage code review exception: {str(e)}"],
+                recommendations=["Debug and retry stage code review"],
+                report_file=f"code_review_stage_{stage_num}_error.md"
+            )
+    
+    def commit_stage_completion(self, stage_num: int, milestones: List[Dict]) -> bool:
+        """Commit the complete stage to the root branch"""
+        logging.info(f"Committing stage {stage_num} completion to root branch")
+        
+        if self.verbose:
+            print(f"  → Committing complete stage {stage_num} to root branch...")
+        
+        try:
+            # Check if there are any changes to commit
+            status_result = subprocess.run([
+                "git", "status", "--porcelain"
+            ], capture_output=True, text=True, encoding='utf-8', errors='replace')
+            
+            if not status_result.stdout.strip():
+                logging.info(f"No changes to commit for stage {stage_num}")
+                return True
+            
+            # Add all changes
+            add_result = subprocess.run([
+                "git", "add", "."
+            ], capture_output=True, text=True, encoding='utf-8', errors='replace')
+            
+            if add_result.returncode != 0:
+                logging.error(f"Failed to add changes for stage {stage_num}: {add_result.stderr}")
+                return False
+            
+            # Create comprehensive commit message
+            commit_message = f"Complete Stage {stage_num}: {len(milestones)} milestones integrated\n\n"
+            
+            commit_message += "Milestones completed in this stage:\n"
+            for milestone in milestones:
+                commit_message += f"- {milestone['id']}: {milestone['title']}\n"
+                tasks = milestone.get('tasks', [])
+                if tasks:
+                    for task in tasks[:3]:  # Show first 3 tasks
+                        commit_message += f"  • {task.get('title', task.get('id', 'Task'))}\n"
+                    if len(tasks) > 3:
+                        commit_message += f"  • ... and {len(tasks) - 3} more tasks\n"
+            
+            commit_message += "\n"
+            commit_message += "Stage completed with:\n"
+            commit_message += "- Individual milestone worktrees merged\n"
+            commit_message += "- Comprehensive code review conducted\n" 
+            commit_message += "- Quality gates validated\n"
+            commit_message += "- All changes integrated to main branch\n\n"
+            
+            commit_message += f"Stage {stage_num} represents a significant milestone in the project development.\n\n"
+            commit_message += "🤖 Generated with [Claude Code](https://claude.ai/code)\n\n"
+            commit_message += "Co-Authored-By: Claude <noreply@anthropic.com>"
+            
+            # Commit the stage
+            commit_result = subprocess.run([
+                "git", "commit", "-m", commit_message
+            ], capture_output=True, text=True, encoding='utf-8', errors='replace')
+            
+            if commit_result.returncode == 0:
+                logging.info(f"Successfully committed stage {stage_num} completion")
+                if self.verbose:
+                    print(f"  [STAGE_COMMITTED] Stage {stage_num}")
+                return True
+            else:
+                logging.error(f"Failed to commit stage {stage_num}: {commit_result.stderr}")
+                if self.verbose:
+                    print(f"  [STAGE_COMMIT_FAIL] Stage {stage_num}: {commit_result.stderr[:100]}")
+                return False
+                
+        except Exception as e:
+            logging.error(f"Exception during stage {stage_num} commit: {e}")
+            return False
+    
     def execute_milestone(self, milestone: Dict, stage_num: int) -> Dict:
         """Execute a single milestone"""
         milestone_id = milestone["id"]
@@ -676,11 +844,6 @@ class MilestoneOrchestrator:
         
         if self.verbose:
             print(f"  -> Starting milestone: {milestone['title']} ({milestone_id})")
-            print(f"     Description: {milestone.get('description', 'No description')[:100]}{'...' if len(milestone.get('description', '')) > 100 else ''}")
-            print(f"     Tasks to execute: {len(milestone['tasks'])}")
-            print(f"     Dependencies: {milestone.get('dependencies', 'None')}")
-            if milestone.get('dependencies'):
-                print(f"     Checking dependencies...")
         else:
             print(f"  -> {milestone['title']}")
         
@@ -706,27 +869,13 @@ class MilestoneOrchestrator:
             high_priority_tasks = [t for t in tasks if t.get("priority", "medium") == "high"]
             other_tasks = [t for t in tasks if t.get("priority", "medium") != "high"]
             
-            if self.verbose:
-                print(f"     Task prioritization:")
-                print(f"       High priority: {len(high_priority_tasks)} tasks")
-                print(f"       Other priority: {len(other_tasks)} tasks")
-            
             # Execute high priority tasks first, then others
-            for group_name, task_group in [("High Priority", high_priority_tasks), ("Standard Priority", other_tasks)]:
+            for task_group in [high_priority_tasks, other_tasks]:
                 if not task_group or self.shutdown_requested:
                     continue
                 
-                if self.verbose:
-                    print(f"     Executing {group_name} tasks ({len(task_group)} tasks in parallel)...")
-                    for task in task_group:
-                        print(f"       - {task.get('title', task.get('id', 'Unnamed'))} (with subagent optimization)")
-                
                 group_results = self.execute_task_group(task_group, milestone_id)
                 results.extend(group_results)
-                
-                if self.verbose:
-                    successful = sum(1 for r in group_results if r.success)
-                    print(f"     {group_name} results: {successful}/{len(group_results)} successful")
                 
                 # Check if any critical tasks failed
                 critical_failures = [r for r in group_results if not r.success and r.task_id in [t["id"] for t in high_priority_tasks]]
@@ -736,6 +885,21 @@ class MilestoneOrchestrator:
             
             # Milestone validation
             milestone_success = self.validate_milestone_completion(milestone, results)
+            
+            # Conduct code review if milestone succeeded and code review is enabled
+            code_review_result = None
+            if milestone_success and self.config.get("code_review", {}).get("enabled", True):
+                code_review_result = self.conduct_milestone_code_review(milestone_id, milestone, stage_num)
+                if not code_review_result.success and code_review_result.has_quality_issues:
+                    milestone_success = False
+                    logging.warning(f"Milestone {milestone_id} failed code review quality gates")
+            
+            # Commit worktree changes if milestone succeeded
+            if milestone_success and self.config["git"]["use_worktrees"]:
+                commit_success = self.commit_milestone_worktree(milestone_id, milestone)
+                if not commit_success:
+                    logging.warning(f"Failed to commit worktree for milestone {milestone_id}")
+                    # Don't fail the milestone for commit issues, just warn
             
             # Update TASKS.md
             if milestone_success:
@@ -748,7 +912,14 @@ class MilestoneOrchestrator:
                 "milestone_id": milestone_id,
                 "success": milestone_success,
                 "duration": duration,
-                "task_results": [{"task_id": r.task_id, "success": r.success} for r in results]
+                "task_results": [{"task_id": r.task_id, "success": r.success} for r in results],
+                "code_review": {
+                    "conducted": code_review_result is not None,
+                    "success": code_review_result.success if code_review_result else True,
+                    "quality_score": code_review_result.quality_score if code_review_result else 1.0,
+                    "report_file": code_review_result.report_file if code_review_result else None,
+                    "iterations": code_review_result.iterations_completed if code_review_result else 0
+                }
             }
             
         except Exception as e:
@@ -759,6 +930,119 @@ class MilestoneOrchestrator:
                 "error": str(e),
                 "duration": time.time() - milestone_start_time
             }
+    
+    def conduct_milestone_code_review(self, milestone_id: str, milestone: Dict, stage_num: int) -> CodeReviewResult:
+        """Conduct iterative code review for a milestone"""
+        logging.info(f"Conducting code review for milestone {milestone_id}")
+        
+        if self.verbose:
+            print(f"      → Running code review for {milestone_id}...")
+        
+        worktree_path = self.state.state.get("worktree_paths", {}).get(milestone_id)
+        
+        try:
+            # Conduct initial code review with iterative improvement
+            review_result = self.code_reviewer.conduct_code_review(
+                milestone_id, 
+                worktree_path=worktree_path, 
+                review_type="milestone"
+            )
+            
+            if self.verbose:
+                status = "[OK]" if review_result.success and not review_result.has_quality_issues else "[NEEDS_WORK]"
+                print(f"      {status} Code review completed - Score: {review_result.quality_score:.2f}, Iterations: {review_result.iterations_completed}")
+                
+                if review_result.has_quality_issues:
+                    if review_result.todos_found:
+                        print(f"           TODOs found: {len(review_result.todos_found)}")
+                    if review_result.quality_gates_failed:
+                        print(f"           Quality gates failed: {len(review_result.quality_gates_failed)}")
+                
+            return review_result
+            
+        except Exception as e:
+            logging.error(f"Code review failed for milestone {milestone_id}: {e}")
+            return CodeReviewResult(
+                success=False,
+                quality_score=0.0,
+                todos_found=[],
+                quality_gates_failed=[f"Code review exception: {str(e)}"],
+                recommendations=["Debug and retry code review"],
+                report_file=f"code_review_{milestone_id}_error.md"
+            )
+    
+    def commit_milestone_worktree(self, milestone_id: str, milestone: Dict) -> bool:
+        """Commit changes in a milestone worktree"""
+        worktree_path = self.state.state.get("worktree_paths", {}).get(milestone_id)
+        
+        if not worktree_path:
+            logging.warning(f"No worktree path found for milestone {milestone_id}")
+            return False
+        
+        logging.info(f"Committing worktree for milestone {milestone_id}")
+        
+        if self.verbose:
+            print(f"      → Committing worktree changes for {milestone_id}...")
+        
+        try:
+            original_cwd = os.getcwd()
+            os.chdir(worktree_path)
+            
+            try:
+                # Check if there are any changes to commit
+                status_result = subprocess.run([
+                    "git", "status", "--porcelain"
+                ], capture_output=True, text=True, encoding='utf-8', errors='replace')
+                
+                if not status_result.stdout.strip():
+                    logging.info(f"No changes to commit in worktree {milestone_id}")
+                    return True
+                
+                # Add all changes
+                add_result = subprocess.run([
+                    "git", "add", "."
+                ], capture_output=True, text=True, encoding='utf-8', errors='replace')
+                
+                if add_result.returncode != 0:
+                    logging.error(f"Failed to add changes in worktree {milestone_id}: {add_result.stderr}")
+                    return False
+                
+                # Commit changes
+                commit_message = f"Implement milestone {milestone_id}: {milestone['title']}\n\n"
+                
+                # Add task details to commit message
+                tasks = milestone.get("tasks", [])
+                if tasks:
+                    commit_message += "Tasks completed:\n"
+                    for task in tasks:
+                        commit_message += f"- {task.get('title', task.get('id', 'Unknown task'))}\n"
+                    commit_message += "\n"
+                
+                commit_message += f"Milestone completed as part of automated orchestration.\n\n"
+                commit_message += "🤖 Generated with [Claude Code](https://claude.ai/code)\n\n"
+                commit_message += "Co-Authored-By: Claude <noreply@anthropic.com>"
+                
+                commit_result = subprocess.run([
+                    "git", "commit", "-m", commit_message
+                ], capture_output=True, text=True, encoding='utf-8', errors='replace')
+                
+                if commit_result.returncode == 0:
+                    logging.info(f"Successfully committed worktree {milestone_id}")
+                    if self.verbose:
+                        print(f"      [COMMITTED] {milestone_id}")
+                    return True
+                else:
+                    logging.error(f"Failed to commit worktree {milestone_id}: {commit_result.stderr}")
+                    if self.verbose:
+                        print(f"      [COMMIT_FAIL] {milestone_id}: {commit_result.stderr[:100]}")
+                    return False
+                    
+            finally:
+                os.chdir(original_cwd)
+                
+        except Exception as e:
+            logging.error(f"Exception during commit of worktree {milestone_id}: {e}")
+            return False
     
     def execute_task_group(self, tasks: List[Dict], milestone_id: str) -> List[TaskResult]:
         """Execute a group of tasks in parallel"""
@@ -818,15 +1102,7 @@ class MilestoneOrchestrator:
                 
                 # Execute task
                 if self.verbose:
-                    print(f"      * Executing task: {task.get('title', task_id)} (Attempt {attempt + 1}/{max_retries + 1})")
-                    print(f"        Requirements: {task.get('requirements', 'None')[:100]}{'...' if len(task.get('requirements', '')) > 100 else ''}")
-                    print(f"        Priority: {task.get('priority', 'medium')}")
-                    print(f"        Estimated time: {task.get('estimated_time', 'unknown')} minutes")
-                    if self.state.state["worktree_paths"].get(milestone_id):
-                        print(f"        Worktree: {self.state.state['worktree_paths'][milestone_id]}")
-                else:
-                    # Even in non-verbose mode, show what task is being executed
-                    print(f"      Executing: {task.get('title', task_id)}")
+                    print(f"      * Executing task: {task.get('title', task_id)}")
                 
                 result = self.claude_wrapper.execute_task(
                     task, 
@@ -837,24 +1113,6 @@ class MilestoneOrchestrator:
                 if self.verbose:
                     status = "[OK]" if result.success else "[ERR]"
                     print(f"      {status} Task {task_id}: {'Completed' if result.success else result.error}")
-                    if result.success:
-                        print(f"        Duration: {getattr(result, 'duration', 0):.1f}s")
-                        if hasattr(result, 'output') and result.output:
-                            preview = result.output[:200].replace('\n', ' ')
-                            print(f"        Output preview: {preview}{'...' if len(result.output) > 200 else ''}")
-                            
-                            # Check for file creation keywords in output
-                            output_lower = result.output.lower()
-                            file_creation_words = ["created", "wrote", "written", "saved", "generated"]
-                            found_creation = [word for word in file_creation_words if word in output_lower]
-                            if found_creation:
-                                print(f"        ✓ File creation detected: {', '.join(found_creation)}")
-                            else:
-                                print(f"        ⚠️  No file creation keywords found in output")
-                else:
-                    # In normal mode, still show task progress
-                    status = "✓" if result.success else "✗"
-                    print(f"    {status} {task.get('title', task_id)}")
                 
                 if result.success:
                     self.state.state["completed_tasks"].add(task_id)
@@ -864,27 +1122,15 @@ class MilestoneOrchestrator:
                     error_details = f"Task {task_id} failed (attempt {attempt + 1}): {result.error}"
                     logging.warning(error_details)
                     
-                    # Check if this was a rate limit error
-                    is_rate_limited = hasattr(result, 'rate_limited') and getattr(result, 'rate_limited', False)
-                    
                     # Print error details in verbose mode
                     if self.verbose:
                         print(f"      [ERR] {error_details}")
-                        if is_rate_limited:
-                            print(f"      Rate limit detected: {getattr(result, 'rate_limit_reason', 'Unknown')}")
                         if hasattr(result, 'output') and result.output:
                             print(f"      Output: {result.output[:200]}...")  # First 200 chars
                     
                     if attempt < max_retries:
-                        if is_rate_limited:
-                            # Longer wait for rate limits (5-30 minutes)
-                            wait_time = 300 * (2 ** attempt)  # 5min, 10min, 20min
-                            print(f"      ⏳ Rate limit detected, waiting {wait_time//60} minutes before retry...")
-                            logging.info(f"Rate limit retry for task {task_id} in {wait_time}s")
-                        else:
-                            # Normal exponential backoff
-                            wait_time = retry_delay * (2 ** attempt)
-                            logging.info(f"Retrying task {task_id} in {wait_time}s")
+                        wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                        logging.info(f"Retrying task {task_id} in {wait_time}s")
                         time.sleep(wait_time)
             
             except Exception as e:
@@ -1038,12 +1284,6 @@ def main():
                       help="Enable verbose output showing detailed progress")
     parser.add_argument("--reset", action="store_true",
                       help="Reset orchestrator state and start fresh")
-    parser.add_argument("--model", choices=["opus", "sonnet", "haiku"], 
-                      help="Model to use for Claude Code execution (opus, sonnet, haiku)")
-    parser.add_argument("--plan-model", choices=["opus", "sonnet", "haiku"],
-                      help="Model to use for planning phase (default: opus)")
-    parser.add_argument("--dev-model", choices=["opus", "sonnet", "haiku"], 
-                      help="Model to use for development phase (default: sonnet)")
     
     args = parser.parse_args()
     
@@ -1051,17 +1291,6 @@ def main():
         # Initialize orchestrator
         orchestrator = MilestoneOrchestrator(args.config)
         orchestrator.verbose = args.verbose
-        
-        # Set model preferences
-        if not "claude" in orchestrator.config:
-            orchestrator.config["claude"] = {}
-        
-        if args.model:
-            orchestrator.config["claude"]["model"] = args.model
-        if args.plan_model:
-            orchestrator.config["claude"]["plan_model"] = args.plan_model  
-        if args.dev_model:
-            orchestrator.config["claude"]["dev_model"] = args.dev_model
         
         # Reset state if requested
         if args.reset:

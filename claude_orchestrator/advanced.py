@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import tempfile
 import shutil
 import re
+import uuid
 
 @dataclass
 class ValidationResult:
@@ -35,6 +36,21 @@ class ValidationResult:
     
     def add_warning(self, warning: str):
         self.warnings.append(warning)
+
+@dataclass
+class CodeReviewResult:
+    """Result of code review process"""
+    success: bool
+    quality_score: float
+    todos_found: List[str]
+    quality_gates_failed: List[str]
+    recommendations: List[str]
+    report_file: str
+    iterations_completed: int = 0
+    
+    @property
+    def has_quality_issues(self) -> bool:
+        return len(self.todos_found) > 0 or len(self.quality_gates_failed) > 0 or self.quality_score < 0.8
 
 class RateLimitManager:
     """Manages API rate limiting with intelligent backoff"""
@@ -350,11 +366,7 @@ class WorktreeManager:
 class ClaudeCodeWrapper:
     """Wrapper for Claude Code CLI interactions"""
     
-    def __init__(self, claude_path: str = "claude", config: Dict = None, project_dir: str = None):
-        import os
-        # Store project directory for file validation
-        self.project_dir = project_dir or os.getcwd()
-        
+    def __init__(self, claude_path: str = "claude"):
         # Try to find the full path to claude command
         import shutil
         if claude_path == "claude":
@@ -378,7 +390,6 @@ class ClaudeCodeWrapper:
         else:
             self.claude_path = claude_path
             
-        self.config = config or {}
         self.session_id = None
         self.default_timeout = 300
         
@@ -405,7 +416,7 @@ class ClaudeCodeWrapper:
     def execute_task(self, task: Dict[str, Any], worktree_path: Optional[str] = None, 
                     timeout: int = 300) -> 'TaskResult':
         """Execute a task using Claude Code"""
-        from .orchestrator import TaskResult  # Avoid circular import
+        from orchestrator import TaskResult  # Avoid circular import
         
         if not self.is_available:
             error_msg = f"Claude Code CLI not available at path: {self.claude_path}"
@@ -473,7 +484,7 @@ class ClaudeCodeWrapper:
         milestone_id = task.get('milestone_id', 'unknown')
         
         # Generate specific, actionable prompt that instructs Claude CLI to create files
-        prompt = f"""TASK: {task_title}
+        prompt = f"""You must implement: {task_title}
 
 TASK ID: {task_id}
 MILESTONE: {milestone_id}
@@ -484,69 +495,59 @@ REQUIREMENTS:
 ACCEPTANCE CRITERIA:
 {acceptance_criteria}
 
-CRITICAL INSTRUCTIONS - FILE CREATION REQUIRED
+CRITICAL INSTRUCTIONS:
+1. You MUST create actual files using Write, Edit, or MultiEdit tools
+2. You MUST NOT just provide code examples or explanations
+3. File creation is REQUIRED for this task to be considered complete
+4. Use appropriate file paths based on the project structure
 
-You MUST create actual files to complete this task. This is NOT a discussion or planning task.
+SPECIFIC ACTIONS REQUIRED:
+- If this is a component task, create the component file in the appropriate directory (e.g., src/components/)
+- If this involves configuration, create or modify configuration files
+- If this involves tests, create test files in the appropriate test directory
+- If this involves documentation, create or update relevant documentation files
 
-SUBAGENT OPTIMIZATION:
-Use specialized subagents to maximize efficiency and quality:
-- Use typescript-expert for TypeScript/React component development
-- Use react-expert for React component patterns and hooks
-- Use ui-designer for component architecture and UI specifications  
-- Use testing-expert for test file creation and validation
-- Use code-review-expert proactively after significant code changes
-- Use refactoring-expert for code optimization and cleanup
-- Use Task tool with appropriate subagent when complexity requires specialized expertise
+MCP SERVERS AVAILABLE:
+Use the following MCP servers when appropriate for enhanced capabilities:
 
-MANDATORY ACTIONS:
-1. Use Read tool to examine the current project structure
-2. Use Write, Edit, or MultiEdit tools to create/modify the required files
-3. Create complete, working files (not code snippets or examples)
-4. Follow the project's existing patterns and conventions
-5. Leverage appropriate subagents for specialized tasks (TypeScript, React, testing, etc.)
+🔍 CONTEXT7 MCP - For documentation and research:
+- Use when you need to consult documentation or research best practices
+- Helpful for understanding project context and standards
+- Use for gathering information about frameworks, libraries, and patterns
 
-FILE CREATION REQUIREMENTS:
-- For components: Create in src/components/ with proper React/TypeScript structure
-- For utilities: Create in src/utils/ or appropriate utility directory
-- For tests: Create test files in __tests__/ or alongside source files
-- For configuration: Update/create config files in project root
+🎭 PLAYWRIGHT MCP - For browser testing and E2E testing:
+- Use when implementing testing functionality
+- Essential for UI testing, browser automation, and end-to-end tests
+- Use for creating test scenarios and validating user interactions
 
-VERIFICATION STEPS:
-1. After creating files, verify they exist using Read tool
-2. Ensure all imports and dependencies are correctly set up
-3. Check that the created files integrate properly with existing code
+🎨 ACETERNITY MCP - For UI design and components:
+- Use when creating UI components or styling
+- Provides modern design patterns and component libraries
+- Use for implementing responsive layouts and beautiful interfaces
 
-⚠️  WARNING: Tasks are automatically validated by checking for actual file changes.
-    If no files are created or modified, this task will be marked as FAILED and retried.
+IMPLEMENTATION STEPS:
+1. Analyze the current project structure using available tools
+2. Determine which MCP servers would be most helpful for this task
+3. Use relevant MCP servers for research, testing, or design guidance
+4. Determine the exact file paths needed for implementation
+5. Create or modify files using Write/Edit/MultiEdit tools
+6. Ensure all created files follow the project's conventions and structure
+7. If implementing UI components, leverage Aceternity MCP for modern designs
+8. If implementing testing, use Playwright MCP for comprehensive test coverage
+9. Use Context7 MCP for documentation consultation when needed
+10. Verify that your implementation meets all requirements and acceptance criteria
 
-SUCCESS INDICATORS:
-When you create files, explicitly state: "Successfully created file: [filename]"
-When you modify files, explicitly state: "Successfully modified file: [filename]"
+IMPORTANT: This task will ONLY be marked as successful if you actually create or modify files. Simply acknowledging the task or providing code snippets without creating files will result in task failure.
 
-SUBAGENT USAGE EXAMPLES:
-- For React components: "I'll use the typescript-expert to create this component with proper TypeScript patterns"
-- For UI architecture: "Let me use the ui-designer to plan the component structure first"  
-- For complex logic: "I'll use the react-expert for optimal hook patterns and state management"
-- For testing: "I'll use the testing-expert to create comprehensive test coverage"
-- After implementation: "Using code-review-expert to verify the implementation quality"
-
-EXECUTION STRATEGY:
-1. Analyze task complexity and choose appropriate subagents
-2. Use Task tool to launch specialized agents when needed for complex work
-3. Implement files directly for straightforward tasks
-4. Always use code-review-expert proactively after significant implementations
-
-DO NOT provide explanations without implementation.
-DO NOT ask clarifying questions - implement based on the requirements provided.
-START IMPLEMENTATION IMMEDIATELY using file creation tools and specialized subagents."""
+Begin implementation now using the appropriate file creation tools and MCP servers."""
         
         return prompt
     
     def _execute_claude_command(self, prompt: str, timeout: int) -> Dict[str, Any]:
         """Execute Claude Code command with prompt"""
         try:
-            # Write prompt to temporary file with UTF-8 encoding
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+            # Write prompt to temporary file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
                 f.write(prompt)
                 prompt_file = f.name
             
@@ -556,67 +557,21 @@ START IMPLEMENTATION IMMEDIATELY using file creation tools and specialized subag
                 with open(prompt_file, 'r', encoding='utf-8') as f:
                     prompt_content = f.read()
                 
-                # Determine which model to use - default to development model
-                claude_config = self.config.get("claude", {})
-                model = claude_config.get("dev_model", claude_config.get("model", "sonnet"))
-                
-                cmd = [self.claude_path, "--print", "--model", model, "--permission-mode", "bypassPermissions", prompt_content]
+                cmd = [self.claude_path, "--print", prompt_content]
                 import platform
                 use_shell = platform.system() == "Windows"
                 
                 logging.debug(f"Executing Claude command: {' '.join(cmd)}")
-                print(f"        Starting Claude Code execution (model: {model}, timeout: {timeout}s)...")
-                
-                # Start the process
-                process = subprocess.Popen(
+                result = subprocess.run(
                     cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    capture_output=True,
                     text=True,
+                    timeout=timeout,
+                    check=False,
                     shell=use_shell,
                     encoding='utf-8',
-                    errors='replace'
+                    errors='replace'  # Replace invalid characters instead of failing
                 )
-                
-                # Show progress dots while waiting
-                import threading
-                import sys
-                def show_progress():
-                    dots = 0
-                    while process.poll() is None:
-                        sys.stdout.write('.')
-                        sys.stdout.flush()
-                        dots += 1
-                        if dots % 50 == 0:  # New line every 50 dots
-                            print(f" ({dots}s)")
-                        time.sleep(1)
-                
-                progress_thread = threading.Thread(target=show_progress, daemon=True)
-                progress_thread.start()
-                
-                try:
-                    stdout, stderr = process.communicate(timeout=timeout)
-                    print()  # New line after progress dots
-                    print(f"        ✓ Claude Code execution completed (return code: {process.returncode})")
-                    
-                    result_obj = type('Result', (), {
-                        'returncode': process.returncode,
-                        'stdout': stdout,
-                        'stderr': stderr
-                    })()
-                    result = result_obj
-                    
-                except subprocess.TimeoutExpired:
-                    print()  # New line after progress dots
-                    print(f"        ⏰ Claude Code execution timed out after {timeout}s")
-                    process.kill()
-                    stdout, stderr = process.communicate()
-                    result_obj = type('Result', (), {
-                        'returncode': -1,
-                        'stdout': stdout,
-                        'stderr': f"Execution timed out after {timeout} seconds"
-                    })()
-                    result = result_obj
                 
                 logging.debug(f"Command completed with return code: {result.returncode}")
                 if result.stderr:
@@ -650,41 +605,15 @@ START IMPLEMENTATION IMMEDIATELY using file creation tools and specialized subag
     
     def _analyze_result(self, result: Dict[str, Any], task: Dict[str, Any]) -> bool:
         """Analyze Claude Code execution result"""
-        output = result.get("output", "")
-        error = result.get("error", "")
-        
-        # Check for rate limit or quota errors in Claude Code
-        error_lower = error.lower() if error else ""
-        output_lower = output.lower() if output else ""
-        
-        rate_limit_indicators = [
-            "rate limit", "quota exceeded", "too many requests", 
-            "usage limit", "daily limit", "monthly limit",
-            "you have reached your", "5 hour limit", "5-hour limit"
-        ]
-        
-        for indicator in rate_limit_indicators:
-            if indicator in error_lower or indicator in output_lower:
-                logging.warning(f"Claude Code rate limit detected: {indicator}")
-                # Store rate limit info for retry logic
-                result["rate_limited"] = True
-                result["rate_limit_reason"] = indicator
-                return False
-        
         if result["returncode"] != 0:
             return False
         
-        # Check for file creation indicators (more specific)
-        file_creation_indicators = [
-            "created", "wrote", "written", "saved", "generated",
-            "file created", "component created", "added file",
-            "successfully created", "implementation complete"
-        ]
+        output = result.get("output", "")
         
         # Check for common success indicators
         success_indicators = [
             "Task completed successfully",
-            "Implementation complete", 
+            "Implementation complete",
             "All tests passing",
             "[SUCCESS]",
             "Success"
@@ -703,41 +632,13 @@ START IMPLEMENTATION IMMEDIATELY using file creation tools and specialized subag
         has_success = any(indicator in output for indicator in success_indicators)
         has_errors = any(indicator in output for indicator in error_indicators)
         
-        # Check for file creation indicators first (more reliable)
-        has_file_creation = any(indicator in output.lower() for indicator in file_creation_indicators)
-        
         # If we have explicit success indicators and no errors, consider successful
-        if (has_success or has_file_creation) and not has_errors:
+        if has_success and not has_errors:
             return True
         
         # If we have errors but no success, consider failed
-        if has_errors and not (has_success or has_file_creation):
+        if has_errors and not has_success:
             return False
-        
-        # Check for actual file changes using git status (if in a git repo)
-        try:
-            import subprocess
-            import os
-            
-            # Use the project directory for git status check, not the orchestrator directory
-            project_dir = self.project_dir
-            
-            # Check if we're in a git repository and have changes
-            git_result = subprocess.run(
-                ['git', 'status', '--porcelain'],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                cwd=project_dir
-            )
-            
-            if git_result.returncode == 0 and git_result.stdout.strip():
-                logging.info(f"Detected git changes, considering task successful: {git_result.stdout.strip()[:100]}")
-                return True
-                
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
-            # Git not available or not a git repo, skip this check
-            pass
         
         # Otherwise, assume success if the command completed without error
         return len(output.strip()) > 0
@@ -824,7 +725,7 @@ class MilestoneValidator:
     def validate_milestone(self, milestone: Dict[str, Any], 
                           task_results: List['TaskResult']) -> ValidationResult:
         """Validate milestone completion against results"""
-        from .orchestrator import TaskResult  # Avoid circular import
+        from orchestrator import TaskResult  # Avoid circular import
         
         result = ValidationResult(True, [], [])
         
@@ -877,6 +778,321 @@ class MilestoneValidator:
         
         score = max(0.0, min(1.0, base_score - error_penalty - warning_penalty + bonus))
         return score
+
+class CodeReviewManager:
+    """Manages code review processes with iterative improvement"""
+    
+    def __init__(self, claude_wrapper: ClaudeCodeWrapper, config: Dict = None):
+        self.claude_wrapper = claude_wrapper
+        self.config = config or {}
+        self.max_iterations = self.config.get("code_review", {}).get("max_iterations", 3)
+        self.quality_threshold = self.config.get("code_review", {}).get("quality_threshold", 0.8)
+        self.auto_fix = self.config.get("code_review", {}).get("auto_fix", True)
+        
+    def conduct_code_review(self, milestone_id: str, worktree_path: Optional[str] = None, 
+                          review_type: str = "milestone") -> CodeReviewResult:
+        """Conduct comprehensive code review with iterative improvement"""
+        logging.info(f"Starting code review for {review_type}: {milestone_id}")
+        
+        # Generate unique review ID
+        review_id = f"{milestone_id}-{review_type}-{uuid.uuid4().hex[:8]}"
+        report_file = f"code_review_{review_id}.md"
+        
+        iterations_completed = 0
+        final_result = None
+        
+        for iteration in range(self.max_iterations):
+            iterations_completed = iteration + 1
+            
+            logging.info(f"Code review iteration {iteration + 1}/{self.max_iterations}")
+            
+            # Perform code review
+            review_result = self._perform_single_review(
+                milestone_id, worktree_path, report_file, iteration + 1, review_type
+            )
+            
+            if not review_result.success:
+                return review_result
+                
+            # Check if quality threshold is met and no issues remain
+            if not review_result.has_quality_issues:
+                logging.info(f"Code review completed successfully after {iteration + 1} iteration(s)")
+                final_result = review_result
+                break
+                
+            # If auto-fix is enabled and there are issues, try to fix them
+            if self.auto_fix and review_result.has_quality_issues:
+                logging.info(f"Quality issues found, attempting auto-fix (iteration {iteration + 1})")
+                fix_success = self._attempt_auto_fix(review_result, worktree_path)
+                if not fix_success:
+                    logging.warning("Auto-fix failed, manual intervention required")
+                    final_result = review_result
+                    break
+            else:
+                final_result = review_result
+                break
+        
+        if final_result is None:
+            final_result = CodeReviewResult(
+                success=False,
+                quality_score=0.0,
+                todos_found=["Review process failed"],
+                quality_gates_failed=["Maximum iterations exceeded"],
+                recommendations=["Manual review required"],
+                report_file=report_file,
+                iterations_completed=iterations_completed
+            )
+        
+        final_result.iterations_completed = iterations_completed
+        logging.info(f"Code review completed with {iterations_completed} iteration(s), final score: {final_result.quality_score:.2f}")
+        
+        return final_result
+    
+    def _perform_single_review(self, milestone_id: str, worktree_path: Optional[str], 
+                              report_file: str, iteration: int, review_type: str) -> CodeReviewResult:
+        """Perform a single code review iteration"""
+        
+        # Prepare code review task
+        review_task = {
+            "id": f"code-review-{milestone_id}-{iteration}",
+            "title": f"Code Review - {milestone_id} (Iteration {iteration})",
+            "requirements": self._prepare_code_review_requirements(milestone_id, review_type),
+            "acceptance_criteria": self._prepare_code_review_acceptance_criteria(),
+            "milestone_id": milestone_id
+        }
+        
+        try:
+            # Execute code review
+            result = self.claude_wrapper.execute_task(review_task, worktree_path)
+            
+            if not result.success:
+                return CodeReviewResult(
+                    success=False,
+                    quality_score=0.0,
+                    todos_found=[],
+                    quality_gates_failed=[f"Code review execution failed: {result.error}"],
+                    recommendations=["Fix execution issues and retry"],
+                    report_file=report_file
+                )
+            
+            # Parse review results
+            return self._parse_review_results(result.output, report_file)
+            
+        except Exception as e:
+            logging.error(f"Code review failed: {e}")
+            return CodeReviewResult(
+                success=False,
+                quality_score=0.0,
+                todos_found=[],
+                quality_gates_failed=[f"Exception during review: {str(e)}"],
+                recommendations=["Debug and fix review process"],
+                report_file=report_file
+            )
+    
+    def _prepare_code_review_requirements(self, milestone_id: str, review_type: str) -> str:
+        """Prepare requirements for code review task"""
+        return f"""
+Conduct a comprehensive code review for {review_type}: {milestone_id}
+
+REVIEW SCOPE:
+- Analyze all files changed/created for this {review_type}
+- Check code quality, architecture, and best practices
+- Identify TODOs, FIXMEs, and incomplete implementations
+- Verify quality gates are met
+- Assess overall implementation quality
+
+QUALITY GATES TO CHECK:
+1. Code builds without errors
+2. All tests pass (if tests exist)
+3. Code follows project conventions
+4. No security vulnerabilities
+5. Performance considerations addressed
+6. Documentation is adequate
+7. Error handling is proper
+8. Code is maintainable and readable
+
+MCP SERVERS FOR ENHANCED REVIEW:
+Use these MCP servers to provide more thorough code review:
+
+🔍 CONTEXT7 MCP - For documentation and standards review:
+- Consult documentation for best practices and standards
+- Research framework-specific patterns and conventions
+- Verify adherence to project architectural guidelines
+
+🎭 PLAYWRIGHT MCP - For testing review:
+- If tests are present, validate test coverage and quality
+- Suggest additional test scenarios for better coverage
+- Review browser testing implementations
+
+🎨 ACETERNITY MCP - For UI/UX review:
+- If UI components are present, review design patterns
+- Check for modern UI best practices and accessibility
+- Validate responsive design and user experience
+
+OUTPUT REQUIREMENTS:
+- Generate a markdown report file: code_review_{milestone_id}_{review_type}.md
+- Include a quality score (0.0 to 1.0)
+- List all TODOs and FIXMEs found
+- Document failed quality gates
+- Provide specific recommendations for improvement
+- Include file-by-file analysis if applicable
+- Use MCP servers to enhance review quality where applicable
+
+CRITICAL: This review must result in the creation of a detailed markdown report file with comprehensive analysis.
+"""
+    
+    def _prepare_code_review_acceptance_criteria(self) -> str:
+        """Prepare acceptance criteria for code review"""
+        return f"""
+ACCEPTANCE CRITERIA:
+1. A comprehensive markdown report file is created
+2. Quality score is calculated and documented
+3. All TODOs and FIXMEs are identified and listed
+4. Failed quality gates are clearly documented
+5. Specific, actionable recommendations are provided
+6. Overall assessment includes pass/fail decision based on quality threshold ({self.quality_threshold})
+
+SUCCESS CRITERIA:
+- Report file is generated and readable
+- Quality analysis is thorough and accurate
+- Recommendations are specific and implementable
+"""
+    
+    def _parse_review_results(self, output: str, report_file: str) -> CodeReviewResult:
+        """Parse code review results from Claude output"""
+        
+        # Extract quality score
+        quality_score = 0.8  # Default
+        quality_match = re.search(r'[Qq]uality [Ss]core:?\s*([\d.]+)', output)
+        if quality_match:
+            try:
+                quality_score = float(quality_match.group(1))
+            except ValueError:
+                pass
+        
+        # Extract TODOs
+        todos_found = []
+        todo_pattern = r'(?:TODO|FIXME|XXX)(?:\([^)]*\))?:?\s*(.+)'
+        todos_found.extend(re.findall(todo_pattern, output, re.IGNORECASE | re.MULTILINE))
+        
+        # Extract failed quality gates
+        quality_gates_failed = []
+        gates_pattern = r'(?:FAILED|FAIL|❌)(?:\s*:)?\s*(.+?)(?:\n|$)'
+        quality_gates_failed.extend(re.findall(gates_pattern, output, re.MULTILINE))
+        
+        # Extract recommendations
+        recommendations = []
+        rec_pattern = r'(?:RECOMMENDATION|RECOMMEND|➤)(?:\s*:)?\s*(.+?)(?:\n|$)'
+        recommendations.extend(re.findall(rec_pattern, output, re.MULTILINE))
+        
+        # If no specific recommendations found, look for bullet points in recommendation sections
+        if not recommendations:
+            rec_section = re.search(r'[Rr]ecommendation[s]?:?\s*(.*?)(?:\n\n|\n[A-Z]|$)', output, re.DOTALL | re.MULTILINE)
+            if rec_section:
+                bullet_recs = re.findall(r'^[-*•]\s*(.+?)$', rec_section.group(1), re.MULTILINE)
+                recommendations.extend(bullet_recs)
+        
+        success = quality_score >= self.quality_threshold and not quality_gates_failed
+        
+        return CodeReviewResult(
+            success=success,
+            quality_score=quality_score,
+            todos_found=todos_found,
+            quality_gates_failed=quality_gates_failed,
+            recommendations=recommendations,
+            report_file=report_file
+        )
+    
+    def _attempt_auto_fix(self, review_result: CodeReviewResult, worktree_path: Optional[str]) -> bool:
+        """Attempt to automatically fix issues found in code review"""
+        if not self.auto_fix or not review_result.has_quality_issues:
+            return True
+        
+        logging.info("Attempting auto-fix of code review issues")
+        
+        # Prepare auto-fix task based on review results
+        fix_recommendations = review_result.recommendations[:5]  # Limit to top 5
+        fix_todos = review_result.todos_found[:10]  # Limit to top 10
+        
+        fix_task = {
+            "id": f"auto-fix-{uuid.uuid4().hex[:8]}",
+            "title": "Auto-fix Code Review Issues",
+            "requirements": self._prepare_auto_fix_requirements(fix_recommendations, fix_todos, review_result.quality_gates_failed),
+            "acceptance_criteria": self._prepare_auto_fix_acceptance_criteria(),
+            "milestone_id": "auto-fix"
+        }
+        
+        try:
+            result = self.claude_wrapper.execute_task(fix_task, worktree_path)
+            if result.success:
+                logging.info("Auto-fix completed successfully")
+                return True
+            else:
+                logging.warning(f"Auto-fix failed: {result.error}")
+                return False
+        except Exception as e:
+            logging.error(f"Auto-fix exception: {e}")
+            return False
+    
+    def _prepare_auto_fix_requirements(self, recommendations: List[str], todos: List[str], failed_gates: List[str]) -> str:
+        """Prepare requirements for auto-fix task"""
+        req = "Fix the following code review issues:\n\n"
+        
+        if recommendations:
+            req += "RECOMMENDATIONS TO IMPLEMENT:\n"
+            for i, rec in enumerate(recommendations, 1):
+                req += f"{i}. {rec}\n"
+            req += "\n"
+        
+        if todos:
+            req += "TODOs TO ADDRESS:\n"
+            for i, todo in enumerate(todos, 1):
+                req += f"{i}. {todo}\n"
+            req += "\n"
+        
+        if failed_gates:
+            req += "QUALITY GATES TO FIX:\n"
+            for i, gate in enumerate(failed_gates, 1):
+                req += f"{i}. {gate}\n"
+            req += "\n"
+        
+        req += """
+MCP SERVERS FOR ENHANCED FIXES:
+Use these MCP servers to implement better solutions:
+
+🔍 CONTEXT7 MCP - For research and documentation:
+- Research best practices for the issues being fixed
+- Consult documentation for proper implementation patterns
+
+🎭 PLAYWRIGHT MCP - For testing improvements:
+- When fixing testing-related issues
+- Implement comprehensive test coverage for fixes
+
+🎨 ACETERNITY MCP - For UI/UX fixes:
+- When fixing UI components or styling issues
+- Implement modern design patterns and accessibility improvements
+
+CRITICAL INSTRUCTIONS:
+1. Address as many issues as possible while maintaining code functionality
+2. Make minimal, focused changes that resolve the specific issues
+3. Ensure all changes follow project conventions
+4. Test that your changes don't break existing functionality
+5. Use Write, Edit, or MultiEdit tools to make actual file changes
+6. Leverage appropriate MCP servers for enhanced solutions
+"""
+        
+        return req
+    
+    def _prepare_auto_fix_acceptance_criteria(self) -> str:
+        """Prepare acceptance criteria for auto-fix"""
+        return """
+ACCEPTANCE CRITERIA:
+1. Code review issues are resolved without breaking functionality
+2. Changes follow project coding conventions
+3. All file modifications are completed using appropriate tools
+4. No new issues are introduced during the fix process
+5. Code still builds and runs correctly after fixes
+"""
 
 # Utility functions
 def setup_logging_for_module():

@@ -101,11 +101,15 @@ class MilestonePreprocessor:
                 if task:
                     tasks.append(task)
         
-        # Method 2: If no explicit tasks, convert technical requirements to tasks
+        # Method 2: If no explicit tasks, convert "Issues to Fix" to tasks
+        if not tasks:
+            tasks = self.convert_issues_to_tasks(content, milestone_id)
+        
+        # Method 3: If no explicit tasks, convert technical requirements to tasks
         if not tasks:
             tasks = self.convert_requirements_to_tasks(content, milestone_id)
         
-        # Method 3: If still no tasks, create from objectives
+        # Method 4: If still no tasks, create from objectives
         if not tasks:
             tasks = self.convert_objectives_to_tasks(content, milestone_id)
             
@@ -214,6 +218,64 @@ class MilestonePreprocessor:
                     "acceptance_criteria": "",
                     "priority": "medium",
                     "estimated_time": 30,
+                    "milestone_id": milestone_id
+                })
+        
+        return tasks
+    
+    def convert_issues_to_tasks(self, content: str, milestone_id: str) -> List[Dict]:
+        """Convert 'Issues to Fix' sections to tasks"""
+        tasks = []
+        
+        # Look for "Issues to Fix" section
+        issues_match = re.search(
+            r'## Issues to Fix\n(.+?)(?=\n## [^#]|\Z)', 
+            content, 
+            re.MULTILINE | re.DOTALL
+        )
+        
+        if issues_match:
+            issues_content = issues_match.group(1)
+            
+            # Find numbered subsections like "### 1. Title"
+            issue_sections = re.findall(
+                r'### (\d+)\.\s*(.+?)\n(.*?)(?=\n### \d+\.|\Z)', 
+                issues_content, 
+                re.MULTILINE | re.DOTALL
+            )
+            
+            for issue_num, issue_title, issue_content in issue_sections:
+                task_id = f"{milestone_id}-T{issue_num}"
+                
+                # Extract problem description
+                problem_match = re.search(r'\*\*Problem\*\*:\s*(.+?)(?=\n\*\*|\Z)', issue_content, re.DOTALL)
+                problem = problem_match.group(1).strip() if problem_match else ""
+                
+                # Extract expected behavior
+                expected_match = re.search(r'\*\*Expected Behavior\*\*:\s*(.+?)(?=\n\*\*|\Z)', issue_content, re.DOTALL)
+                expected = expected_match.group(1).strip() if expected_match else ""
+                
+                # Build comprehensive requirements
+                requirements = f"Fix Issue: {issue_title.strip()}\n\n"
+                if problem:
+                    requirements += f"Problem: {problem}\n\n"
+                if expected:
+                    requirements += f"Expected Behavior: {expected}\n\n"
+                requirements += "Please investigate and implement a fix for this issue."
+                
+                # Use problem + expected as acceptance criteria
+                acceptance_criteria = ""
+                if problem and expected:
+                    acceptance_criteria = f"- Issue is resolved: {problem.replace(problem[:50] + '...', problem[:50] + '...' if len(problem) > 50 else problem)}\n"
+                    acceptance_criteria += f"- Expected behavior achieved: {expected.replace(expected[:50] + '...', expected[:50] + '...' if len(expected) > 50 else expected)}"
+                
+                tasks.append({
+                    "id": task_id,
+                    "title": f"Fix: {issue_title.strip()}",
+                    "requirements": requirements,
+                    "acceptance_criteria": acceptance_criteria,
+                    "priority": "high",  # Bug fixes are typically high priority
+                    "estimated_time": 45,  # Bug fixes often take longer
                     "milestone_id": milestone_id
                 })
         
