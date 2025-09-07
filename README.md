@@ -4,6 +4,8 @@ A powerful orchestration system for managing Claude Code development with parall
 
 ## 🚀 Features
 
+- **Universal Milestone Format Support**: Automatically processes any milestone format without requiring specific schemas
+- **Intelligent Preprocessing**: Detects and normalizes different milestone structures (Task sections, Technical Requirements, Objectives)
 - **Parallel Execution**: Run multiple Claude Code instances for tasks within a stage
 - **Sequential Stages**: Ensure proper dependency ordering between stages
 - **Git Worktree Isolation**: Each task runs in its own isolated environment
@@ -143,6 +145,9 @@ claude-orchestrator --milestone A1
 # Dry run (show what would be executed)
 claude-orchestrator --dry-run
 
+# Validate milestone formats without execution
+claude-orchestrator --validate-only
+
 # Use custom config
 claude-orchestrator --config custom.json
 
@@ -241,11 +246,89 @@ export AUTO_RESUME=false
 
 ## 📝 Creating Milestones
 
-Milestones follow a specific naming pattern: `{STAGE}{TASK}.md`
-- Stage: Single digit (1-9)
-- Task: Single uppercase letter (A-Z)
+### Flexible Milestone Formats
 
-Example milestone structure (`milestones/1A.md`):
+The orchestrator now supports **any reasonable milestone format** thanks to intelligent preprocessing! You can use any of these formats:
+
+#### Format 1: Traditional Task Sections
+```markdown
+# Milestone 1A - Initial Setup
+
+## Description
+Create the foundational project structure and configuration.
+
+## Task 1: Create Project Structure
+Design and implement the basic project layout with necessary directories.
+
+**Deliverables:**
+- Create src/, docs/, tests/ directories
+- Setup package.json and configuration files
+- Initialize README.md
+
+## Task 2: Setup Build System
+Configure build tools and scripts.
+
+**Deliverables:**
+- Configure webpack/build tools
+- Setup npm scripts
+- Create development environment
+```
+
+#### Format 2: Technical Requirements
+```markdown
+# Milestone 1B - Database Integration
+
+## Overview
+Implement database connectivity and basic operations.
+
+## Technical Requirements
+
+### 1. Database Connection
+- Setup database connection pool
+- Configure environment-specific settings
+- Implement connection health checks
+- Add error handling and retry logic
+
+### 2. Data Models
+- Create user data model
+- Implement CRUD operations
+- Add data validation
+- Setup database migrations
+
+### 3. Integration Testing
+- Write integration tests
+- Setup test database
+- Create test fixtures
+```
+
+#### Format 3: Simple Objectives
+```markdown
+# Milestone 1C - Authentication System
+
+## Overview
+Add user authentication and authorization.
+
+## Objectives
+- Implement user registration functionality
+- Add login/logout endpoints  
+- Create JWT token management
+- Setup role-based access control
+- Add password reset functionality
+```
+
+### Automatic Task Extraction
+
+The preprocessing system automatically:
+
+- **Detects Task Sections**: Finds `## Task N:`, `## Task N -`, or numbered sections
+- **Converts Requirements**: Transforms technical requirements into executable tasks
+- **Extracts Objectives**: Uses objective lists as fallback tasks
+- **Normalizes Format**: Ensures consistent structure for the orchestrator
+- **Preserves Content**: Maintains all original information and context
+
+### Legacy Format Support
+
+The traditional format is still fully supported:
 ```markdown
 # Milestone 1A - Initial Setup
 
@@ -273,6 +356,14 @@ Create the foundational project structure and configuration.
 ## Estimated Time
 2 hours
 ```
+
+### Best Practices
+
+- **Clear Titles**: Use descriptive milestone and task titles
+- **Specific Deliverables**: Define concrete outputs for each task
+- **Proper Dependencies**: Document milestone relationships
+- **Realistic Estimates**: Provide time estimates when possible
+- **Any Format**: Use whatever markdown structure works best for your team!
 
 ## 🔄 Execution Flow
 
@@ -394,6 +485,13 @@ For issues or questions:
 
 ## 🔮 Advanced Features
 
+### Milestone Preprocessor
+- **Universal Format Support**: Automatically detects and normalizes any milestone format
+- **Smart Task Extraction**: Converts various structures (Tasks, Requirements, Objectives) into executable units
+- **Pattern Recognition**: Supports multiple task definition patterns (`## Task N:`, `### N.`, etc.)
+- **Content Preservation**: Maintains all original milestone information and context
+- **Backward Compatibility**: Works seamlessly with existing milestone files
+
 ### Rate Limit Manager
 - Tracks API rate limits
 - Implements exponential backoff
@@ -413,6 +511,7 @@ For issues or questions:
 - Validates milestone completion
 - Checks test results
 - Ensures code quality standards
+- Flexible ID validation for different naming conventions
 
 ---
 

@@ -340,18 +340,29 @@ class MilestoneOrchestrator:
         if not milestones_dir.exists():
             raise FileNotFoundError(f"Milestones directory not found: {milestones_dir}")
         
+        print(f"🔍 Discovering milestones in: {milestones_dir}")
+        milestone_files = list(milestones_dir.glob("*.md"))
+        if self.verbose:
+            print(f"  Found {len(milestone_files)} milestone files:")
+            for file in milestone_files:
+                print(f"    - {file.name}")
+        
         milestones = []
-        for milestone_file in milestones_dir.glob("*.md"):
+        for milestone_file in milestone_files:
             try:
+                if not self.verbose:
+                    print(f"  📄 Processing {milestone_file.name}...")
                 milestone = self.parse_milestone_file(milestone_file)
                 if milestone:
                     milestones.append(milestone)
             except Exception as e:
                 logging.error(f"Failed to parse milestone {milestone_file}: {e}")
+                print(f"  ❌ Failed to parse {milestone_file.name}: {e}")
         
         # Sort by milestone ID
         milestones.sort(key=lambda x: x["id"])
         logging.info(f"Discovered {len(milestones)} milestones")
+        print(f"✅ Successfully loaded {len(milestones)} milestones")
         return milestones
     
     def parse_milestone_file(self, filepath: Path) -> Optional[Dict]:
@@ -359,6 +370,8 @@ class MilestoneOrchestrator:
         try:
             # Preprocess the milestone to normalize its format
             logging.info(f"Preprocessing milestone file: {filepath}")
+            if self.verbose:
+                print(f"    Preprocessing {filepath.name}...")
             normalized_content = self.preprocessor.preprocess_milestone(filepath)
             
             # Extract milestone metadata from normalized content
@@ -388,6 +401,12 @@ class MilestoneOrchestrator:
             
             # Log preprocessing success
             logging.info(f"Successfully preprocessed {milestone_id}: {len(tasks)} tasks extracted")
+            if self.verbose:
+                print(f"    ✓ Preprocessed {milestone_id}: {len(tasks)} tasks extracted")
+                for i, task in enumerate(tasks[:3]):  # Show first 3 tasks
+                    print(f"      - Task {i+1}: {task.get('title', task.get('id', 'Unnamed'))}")
+                if len(tasks) > 3:
+                    print(f"      ... and {len(tasks) - 3} more tasks")
             
             return {
                 "id": milestone_id,
@@ -474,6 +493,14 @@ class MilestoneOrchestrator:
         print(f"   Milestones: {len(milestones)}")
         print(f"   Stages: {len(stages)}")
         if self.verbose:
+            print(f"   Configuration: {self.config.get('execution', {})}")
+            print(f"   Rate Limiting: {self.config.get('rate_limit', {})}")
+            print(f"   Git Worktrees: {self.config['git']['use_worktrees']}")
+            for stage_num, stage_milestones in stages.items():
+                print(f"   Stage {stage_num}: {len(stage_milestones)} milestones")
+                for milestone in stage_milestones:
+                    print(f"     - {milestone['id']}: {milestone['title']} ({len(milestone['tasks'])} tasks)")
+        else:
             for stage_num, stage_milestones in stages.items():
                 print(f"   Stage {stage_num}: {len(stage_milestones)} milestones")
         print()
@@ -490,6 +517,19 @@ class MilestoneOrchestrator:
                     continue
                 
                 print(f">> Executing Stage {stage_num} ({len(stages[stage_num])} milestones)")
+                if self.verbose:
+                    print(f"   Stage {stage_num} details:")
+                    for milestone in stages[stage_num]:
+                        print(f"     - Milestone: {milestone['id']}")
+                        print(f"       Title: {milestone['title']}")
+                        print(f"       Tasks: {len(milestone['tasks'])}")
+                        if milestone.get('dependencies'):
+                            print(f"       Dependencies: {milestone['dependencies']}")
+                        for i, task in enumerate(milestone['tasks'][:3]):  # Show first 3 tasks
+                            print(f"         Task {i+1}: {task.get('title', task.get('id', 'Unnamed'))}")
+                        if len(milestone['tasks']) > 3:
+                            print(f"         ... and {len(milestone['tasks']) - 3} more tasks")
+                    print()
                 success = self.execute_stage(stage_num, stages[stage_num])
                 if not success:
                     print(f"[FAILED] Stage {stage_num} failed, stopping execution")
@@ -625,6 +665,11 @@ class MilestoneOrchestrator:
         
         if self.verbose:
             print(f"  -> Starting milestone: {milestone['title']} ({milestone_id})")
+            print(f"     Description: {milestone.get('description', 'No description')[:100]}{'...' if len(milestone.get('description', '')) > 100 else ''}")
+            print(f"     Tasks to execute: {len(milestone['tasks'])}")
+            print(f"     Dependencies: {milestone.get('dependencies', 'None')}")
+            if milestone.get('dependencies'):
+                print(f"     Checking dependencies...")
         else:
             print(f"  -> {milestone['title']}")
         
@@ -650,13 +695,27 @@ class MilestoneOrchestrator:
             high_priority_tasks = [t for t in tasks if t.get("priority", "medium") == "high"]
             other_tasks = [t for t in tasks if t.get("priority", "medium") != "high"]
             
+            if self.verbose:
+                print(f"     Task prioritization:")
+                print(f"       High priority: {len(high_priority_tasks)} tasks")
+                print(f"       Other priority: {len(other_tasks)} tasks")
+            
             # Execute high priority tasks first, then others
-            for task_group in [high_priority_tasks, other_tasks]:
+            for group_name, task_group in [("High Priority", high_priority_tasks), ("Standard Priority", other_tasks)]:
                 if not task_group or self.shutdown_requested:
                     continue
                 
+                if self.verbose:
+                    print(f"     Executing {group_name} tasks ({len(task_group)} tasks)...")
+                    for task in task_group:
+                        print(f"       - {task.get('title', task.get('id', 'Unnamed'))}")
+                
                 group_results = self.execute_task_group(task_group, milestone_id)
                 results.extend(group_results)
+                
+                if self.verbose:
+                    successful = sum(1 for r in group_results if r.success)
+                    print(f"     {group_name} results: {successful}/{len(group_results)} successful")
                 
                 # Check if any critical tasks failed
                 critical_failures = [r for r in group_results if not r.success and r.task_id in [t["id"] for t in high_priority_tasks]]
@@ -748,7 +807,13 @@ class MilestoneOrchestrator:
                 
                 # Execute task
                 if self.verbose:
-                    print(f"      * Executing task: {task.get('title', task_id)}")
+                    print(f"      * Executing task: {task.get('title', task_id)} (Attempt {attempt + 1}/{max_retries + 1})")
+                    print(f"        Requirements: {task.get('requirements', 'None')[:100]}{'...' if len(task.get('requirements', '')) > 100 else ''}")
+                    print(f"        Priority: {task.get('priority', 'medium')}")
+                    print(f"        Estimated time: {task.get('estimated_time', 'unknown')} minutes")
+                    if self.state.state["worktree_paths"].get(milestone_id):
+                        print(f"        Worktree: {self.state.state['worktree_paths'][milestone_id]}")
+                    print(f"        Starting Claude Code execution...")
                 
                 result = self.claude_wrapper.execute_task(
                     task, 
@@ -759,6 +824,15 @@ class MilestoneOrchestrator:
                 if self.verbose:
                     status = "[OK]" if result.success else "[ERR]"
                     print(f"      {status} Task {task_id}: {'Completed' if result.success else result.error}")
+                    if result.success:
+                        print(f"        Duration: {getattr(result, 'duration', 0):.1f}s")
+                        if hasattr(result, 'output') and result.output:
+                            preview = result.output[:150].replace('\n', ' ')
+                            print(f"        Output preview: {preview}{'...' if len(result.output) > 150 else ''}")
+                else:
+                    # In normal mode, still show task progress
+                    status = "✓" if result.success else "✗"
+                    print(f"    {status} {task.get('title', task_id)}")
                 
                 if result.success:
                     self.state.state["completed_tasks"].add(task_id)
