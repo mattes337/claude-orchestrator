@@ -29,7 +29,7 @@ setup(
     long_description=read_long_description(),
     long_description_content_type='text/markdown',
     url='https://github.com/yourusername/claude-orchestrator',
-    py_modules=['orchestrator', 'advanced'],
+    packages=find_packages(),
     classifiers=[
         'Development Status :: 4 - Beta',
         'Intended Audience :: Developers',
@@ -75,7 +75,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'claude-orchestrator=orchestrator:main',
+            'claude-orchestrator=claude_orchestrator.orchestrator:main',
         ],
     },
     include_package_data=True,
