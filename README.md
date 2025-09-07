@@ -28,7 +28,38 @@ A powerful orchestration system for managing Claude Code development with parall
 
 ## 🔧 Installation
 
-### Windows (Command Prompt/PowerShell)
+### Global Installation (Recommended)
+
+Install the orchestrator globally to use it from any project directory:
+
+```bash
+# Clone or navigate to the orchestrator directory
+cd D:\Test\claude-milestones  # Windows
+cd ~/claude-milestones         # macOS/Linux
+
+# Install globally with pip
+pip install .
+
+# Or install in development mode (editable)
+pip install -e .
+
+# The command 'claude-orchestrator' will now be available globally
+claude-orchestrator --help
+```
+
+**Note for Windows users**: After installation, you may need to add the Python Scripts directory to your PATH:
+- Default location: `%LOCALAPPDATA%\Programs\Python\PythonXX\Scripts\`
+- Or user location: `%APPDATA%\Python\PythonXX\Scripts\`
+
+Alternatively, use the provided batch file:
+```cmd
+# Windows: Use the batch file directly
+D:\Test\claude-milestones\claude-orchestrator.bat --help
+```
+
+### Local Installation
+
+#### Windows (Command Prompt/PowerShell)
 
 ```cmd
 # Clone or create your project directory
@@ -44,7 +75,7 @@ setup.bat setup
 # - Create necessary directories
 ```
 
-### Windows (WSL/Git Bash)
+#### Windows (WSL/Git Bash)
 
 ```bash
 # Clone or create your project directory
@@ -57,7 +88,7 @@ chmod +x orchestrator.sh
 ./orchestrator.sh setup
 ```
 
-### macOS/Linux
+#### macOS/Linux
 
 ```bash
 # Clone or create your project directory
@@ -92,7 +123,34 @@ claude-milestones/
 
 ## 🎯 Usage
 
-### Quick Start
+### Quick Start with Global Command
+
+If you've installed the orchestrator globally:
+
+```bash
+# Navigate to your project directory
+cd /path/to/your/project
+
+# Run all milestones
+claude-orchestrator
+
+# Run specific stage
+claude-orchestrator --stage 2
+
+# Run specific milestone
+claude-orchestrator --milestone A1
+
+# Dry run (show what would be executed)
+claude-orchestrator --dry-run
+
+# Use custom config
+claude-orchestrator --config custom.json
+
+# Run in a different project directory
+claude-orchestrator --project-dir /path/to/project
+```
+
+### Quick Start with Local Scripts
 
 #### Windows Command Prompt
 ```cmd
