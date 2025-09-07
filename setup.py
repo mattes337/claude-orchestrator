@@ -7,12 +7,16 @@ Installs the orchestrator as a global command: claude-orchestrator
 from setuptools import setup, find_packages
 import os
 
-# Get version from _version.py
+# Get version from _version.py using regex (more reliable for setup.py)
 def get_version():
+    import re
     version_file = os.path.join(os.path.dirname(__file__), '_version.py')
-    with open(version_file) as f:
-        exec(f.read())
-    return locals()['__version__']
+    with open(version_file, 'r', encoding='utf-8') as f:
+        version_content = f.read()
+    version_match = re.search(r'^__version__ = ["\']([^"\']*)["\']', version_content, re.M)
+    if version_match:
+        return version_match.group(1)
+    raise RuntimeError('Unable to find version string in _version.py')
 
 # Read the README file
 def read_long_description():
