@@ -552,14 +552,9 @@ START IMPLEMENTATION IMMEDIATELY using file creation tools and specialized subag
                 with open(prompt_file, 'r', encoding='utf-8') as f:
                     prompt_content = f.read()
                 
-                # Determine which model to use based on task type
+                # Determine which model to use - default to development model
                 claude_config = self.config.get("claude", {})
-                task_type = task.get("type", "development")  # plan or development
-                
-                if task_type == "plan":
-                    model = claude_config.get("plan_model", claude_config.get("model", "opus"))
-                else:
-                    model = claude_config.get("dev_model", claude_config.get("model", "sonnet"))
+                model = claude_config.get("dev_model", claude_config.get("model", "sonnet"))
                 
                 cmd = [self.claude_path, "--print", "--model", model, prompt_content]
                 import platform
