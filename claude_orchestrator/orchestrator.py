@@ -282,7 +282,7 @@ class MilestoneOrchestrator:
             "milestones_dir": "milestones",
             "tasks_file": "TASKS.md",
             "execution": {
-                "max_parallel_tasks": 4,
+                "max_parallel_tasks": 6,  # Increase for better parallelism with subagents
                 "task_timeout": 1800,
                 "max_retries": 3,
                 "retry_delay": 30
@@ -502,6 +502,8 @@ class MilestoneOrchestrator:
             print(f"   Configuration: {self.config.get('execution', {})}")
             print(f"   Rate Limiting: {self.config.get('rate_limit', {})}")
             print(f"   Git Worktrees: {self.config['git']['use_worktrees']}")
+            print(f"   Parallel Execution: ✓ ({self.max_workers} workers)")
+            print(f"   Subagent Optimization: ✓ (typescript-expert, react-expert, ui-designer, testing-expert, etc.)")
             for stage_num, stage_milestones in stages.items():
                 print(f"   Stage {stage_num}: {len(stage_milestones)} milestones")
                 for milestone in stage_milestones:
@@ -712,9 +714,9 @@ class MilestoneOrchestrator:
                     continue
                 
                 if self.verbose:
-                    print(f"     Executing {group_name} tasks ({len(task_group)} tasks)...")
+                    print(f"     Executing {group_name} tasks ({len(task_group)} tasks in parallel)...")
                     for task in task_group:
-                        print(f"       - {task.get('title', task.get('id', 'Unnamed'))}")
+                        print(f"       - {task.get('title', task.get('id', 'Unnamed'))} (with subagent optimization)")
                 
                 group_results = self.execute_task_group(task_group, milestone_id)
                 results.extend(group_results)

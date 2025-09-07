@@ -480,15 +480,26 @@ REQUIREMENTS:
 ACCEPTANCE CRITERIA:
 {acceptance_criteria}
 
-🚨 CRITICAL INSTRUCTIONS - FILE CREATION REQUIRED 🚨
+CRITICAL INSTRUCTIONS - FILE CREATION REQUIRED
 
 You MUST create actual files to complete this task. This is NOT a discussion or planning task.
+
+SUBAGENT OPTIMIZATION:
+Use specialized subagents to maximize efficiency and quality:
+- Use typescript-expert for TypeScript/React component development
+- Use react-expert for React component patterns and hooks
+- Use ui-designer for component architecture and UI specifications  
+- Use testing-expert for test file creation and validation
+- Use code-review-expert proactively after significant code changes
+- Use refactoring-expert for code optimization and cleanup
+- Use Task tool with appropriate subagent when complexity requires specialized expertise
 
 MANDATORY ACTIONS:
 1. Use Read tool to examine the current project structure
 2. Use Write, Edit, or MultiEdit tools to create/modify the required files
 3. Create complete, working files (not code snippets or examples)
 4. Follow the project's existing patterns and conventions
+5. Leverage appropriate subagents for specialized tasks (TypeScript, React, testing, etc.)
 
 FILE CREATION REQUIREMENTS:
 - For components: Create in src/components/ with proper React/TypeScript structure
@@ -508,17 +519,30 @@ SUCCESS INDICATORS:
 When you create files, explicitly state: "Successfully created file: [filename]"
 When you modify files, explicitly state: "Successfully modified file: [filename]"
 
+SUBAGENT USAGE EXAMPLES:
+- For React components: "I'll use the typescript-expert to create this component with proper TypeScript patterns"
+- For UI architecture: "Let me use the ui-designer to plan the component structure first"  
+- For complex logic: "I'll use the react-expert for optimal hook patterns and state management"
+- For testing: "I'll use the testing-expert to create comprehensive test coverage"
+- After implementation: "Using code-review-expert to verify the implementation quality"
+
+EXECUTION STRATEGY:
+1. Analyze task complexity and choose appropriate subagents
+2. Use Task tool to launch specialized agents when needed for complex work
+3. Implement files directly for straightforward tasks
+4. Always use code-review-expert proactively after significant implementations
+
 DO NOT provide explanations without implementation.
 DO NOT ask clarifying questions - implement based on the requirements provided.
-START IMPLEMENTATION IMMEDIATELY using file creation tools."""
+START IMPLEMENTATION IMMEDIATELY using file creation tools and specialized subagents."""
         
         return prompt
     
     def _execute_claude_command(self, prompt: str, timeout: int) -> Dict[str, Any]:
         """Execute Claude Code command with prompt"""
         try:
-            # Write prompt to temporary file
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            # Write prompt to temporary file with UTF-8 encoding
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
                 f.write(prompt)
                 prompt_file = f.name
             
@@ -542,7 +566,7 @@ START IMPLEMENTATION IMMEDIATELY using file creation tools."""
                 use_shell = platform.system() == "Windows"
                 
                 logging.debug(f"Executing Claude command: {' '.join(cmd)}")
-                print(f"        🤖 Starting Claude Code execution (model: {model}, timeout: {timeout}s)...")
+                print(f"        Starting Claude Code execution (model: {model}, timeout: {timeout}s)...")
                 
                 # Start the process
                 process = subprocess.Popen(
