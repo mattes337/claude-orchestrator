@@ -560,7 +560,7 @@ START IMPLEMENTATION IMMEDIATELY using file creation tools and specialized subag
                 claude_config = self.config.get("claude", {})
                 model = claude_config.get("dev_model", claude_config.get("model", "sonnet"))
                 
-                cmd = [self.claude_path, "--print", "--model", model, prompt_content]
+                cmd = [self.claude_path, "--print", "--model", model, "--permission-mode", "bypassPermissions", prompt_content]
                 import platform
                 use_shell = platform.system() == "Windows"
                 
