@@ -182,7 +182,8 @@ class MilestoneOrchestrator:
         try:
             result = subprocess.run(
                 ["git", "branch", "--show-current"],
-                capture_output=True, text=True, check=True
+                capture_output=True, text=True, check=True,
+                encoding='utf-8', errors='replace'
             )
             return result.stdout.strip()
         except subprocess.CalledProcessError:

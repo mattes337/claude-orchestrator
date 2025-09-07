@@ -256,7 +256,8 @@ class WorktreeManager:
         try:
             result = subprocess.run(
                 ["git", "rev-parse", "--git-dir"],
-                capture_output=True, text=True, check=True
+                capture_output=True, text=True, check=True,
+                encoding='utf-8', errors='replace'
             )
             return True
         except subprocess.CalledProcessError:
@@ -280,14 +281,15 @@ class WorktreeManager:
             branch_name = f"feature/{worktree_name}"
             subprocess.run(
                 ["git", "checkout", base_branch],
-                check=True, capture_output=True
+                check=True, capture_output=True,
+                encoding='utf-8', errors='replace'
             )
             
             # Create worktree
             subprocess.run([
                 "git", "worktree", "add", str(worktree_path), 
                 "-b", branch_name, base_branch
-            ], check=True, capture_output=True)
+            ], check=True, capture_output=True, encoding='utf-8', errors='replace')
             
             self.active_worktrees[name] = {
                 "path": str(worktree_path),
@@ -313,7 +315,7 @@ class WorktreeManager:
             # Remove worktree
             subprocess.run([
                 "git", "worktree", "remove", str(path), "--force"
-            ], check=True, capture_output=True)
+            ], check=True, capture_output=True, encoding='utf-8', errors='replace')
             
             # Remove from active tracking
             for name, info in list(self.active_worktrees.items()):
@@ -389,7 +391,7 @@ class ClaudeCodeWrapper:
             
             result = subprocess.run([self.claude_path, "--version"], 
                                   capture_output=True, text=True, timeout=10,
-                                  shell=use_shell)
+                                  shell=use_shell, encoding='utf-8', errors='replace')
             return result.returncode == 0
         except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
             logging.debug(f"Claude availability check failed: {e}")
@@ -494,7 +496,9 @@ Please implement this task following best practices. Ensure all code is properly
                     text=True,
                     timeout=timeout,
                     check=False,
-                    shell=use_shell
+                    shell=use_shell,
+                    encoding='utf-8',
+                    errors='replace'  # Replace invalid characters instead of failing
                 )
                 
                 return {
