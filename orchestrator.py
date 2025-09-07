@@ -27,7 +27,9 @@ from advanced import (
     SystemMonitor,
     WorktreeManager,
     ClaudeCodeWrapper,
-    MilestoneValidator
+    MilestoneValidator,
+    CodeReviewManager,
+    CodeReviewResult
 )
 from milestone_preprocessor import MilestonePreprocessor
 
@@ -207,6 +209,7 @@ class MilestoneOrchestrator:
         self.claude_wrapper = ClaudeCodeWrapper()
         self.validator = MilestoneValidator()
         self.preprocessor = MilestonePreprocessor()
+        self.code_reviewer = CodeReviewManager(self.claude_wrapper, self.config)
         
         # Setup logging
         self.setup_logging()
@@ -300,7 +303,8 @@ class MilestoneOrchestrator:
             "code_review": {
                 "enabled": True,
                 "auto_fix": True,
-                "quality_threshold": 0.8
+                "quality_threshold": 0.8,
+                "max_iterations": 3
             },
             "notifications": {
                 "enabled": False,
@@ -601,6 +605,21 @@ class MilestoneOrchestrator:
         
         if not stage_success:
             logging.error(f"Stage {stage_num} failed with success rate {success_rate:.1%}")
+            return stage_success
+        
+        # If stage was successful and using worktrees, merge them sequentially
+        if stage_success and self.config["git"]["use_worktrees"]:
+            merge_success = self.merge_stage_worktrees(stage_num, milestones)
+            if not merge_success:
+                logging.error(f"Stage {stage_num} worktree merging failed")
+                return False
+        
+        # Conduct final stage code review after merging
+        if stage_success and self.config.get("code_review", {}).get("enabled", True):
+            stage_review_result = self.conduct_stage_code_review(stage_num, milestones)
+            if not stage_review_result.success and stage_review_result.has_quality_issues:
+                logging.error(f"Stage {stage_num} failed final code review")
+                return False
         
         return stage_success
     
@@ -617,6 +636,113 @@ class MilestoneOrchestrator:
                 logging.debug(f"Created worktree for {milestone['id']}: {worktree_path}")
             except Exception as e:
                 logging.warning(f"Failed to create worktree for {milestone['id']}: {e}")
+    
+    def merge_stage_worktrees(self, stage_num: int, milestones: List[Dict]) -> bool:
+        """Merge worktrees sequentially into the root branch"""
+        logging.info(f"Merging worktrees for stage {stage_num}")
+        
+        if self.verbose:
+            print(f"  → Merging {len(milestones)} worktrees into root branch...")
+        
+        successful_merges = 0
+        
+        for milestone in milestones:
+            milestone_id = milestone["id"]
+            worktree_path = self.state.state.get("worktree_paths", {}).get(milestone_id)
+            
+            if not worktree_path:
+                logging.warning(f"No worktree path found for milestone {milestone_id}")
+                continue
+            
+            try:
+                # Get the branch name for this worktree
+                worktree_info = self.worktree_manager.get_worktree_info(milestone_id)
+                if not worktree_info:
+                    logging.warning(f"No worktree info found for {milestone_id}")
+                    continue
+                
+                branch_name = worktree_info["branch"]
+                
+                # Switch to base branch and merge the feature branch
+                base_branch = self.config["git"]["base_branch"]
+                
+                merge_result = subprocess.run([
+                    "git", "checkout", base_branch
+                ], capture_output=True, text=True, encoding='utf-8', errors='replace')
+                
+                if merge_result.returncode != 0:
+                    logging.error(f"Failed to checkout base branch {base_branch}: {merge_result.stderr}")
+                    continue
+                
+                merge_result = subprocess.run([
+                    "git", "merge", "--no-ff", branch_name, 
+                    "-m", f"Merge milestone {milestone_id}: {milestone['title']}"
+                ], capture_output=True, text=True, encoding='utf-8', errors='replace')
+                
+                if merge_result.returncode == 0:
+                    successful_merges += 1
+                    logging.info(f"Successfully merged {milestone_id}")
+                    
+                    if self.verbose:
+                        print(f"    [MERGED] {milestone_id}: {milestone['title']}")
+                else:
+                    logging.error(f"Failed to merge {milestone_id}: {merge_result.stderr}")
+                    if self.verbose:
+                        print(f"    [MERGE_FAIL] {milestone_id}: {merge_result.stderr[:100]}")
+            
+            except Exception as e:
+                logging.error(f"Exception during merge of {milestone_id}: {e}")
+                if self.verbose:
+                    print(f"    [ERROR] {milestone_id}: {str(e)}")
+        
+        merge_success = successful_merges >= len(milestones) * 0.8  # At least 80% successful
+        
+        if merge_success:
+            logging.info(f"Stage {stage_num} worktree merging completed: {successful_merges}/{len(milestones)} successful")
+        else:
+            logging.error(f"Stage {stage_num} worktree merging failed: only {successful_merges}/{len(milestones)} successful")
+        
+        return merge_success
+    
+    def conduct_stage_code_review(self, stage_num: int, milestones: List[Dict]) -> CodeReviewResult:
+        """Conduct comprehensive code review for entire stage after merging"""
+        logging.info(f"Conducting final code review for stage {stage_num}")
+        
+        if self.verbose:
+            print(f"  → Running final code review for stage {stage_num}...")
+        
+        stage_id = f"stage-{stage_num}"
+        
+        try:
+            # Conduct stage-level code review (no worktree path since we're in main branch now)
+            review_result = self.code_reviewer.conduct_code_review(
+                stage_id, 
+                worktree_path=None,  # Use main branch 
+                review_type="stage"
+            )
+            
+            if self.verbose:
+                status = "[OK]" if review_result.success and not review_result.has_quality_issues else "[NEEDS_WORK]"
+                print(f"      {status} Stage code review completed - Score: {review_result.quality_score:.2f}, Iterations: {review_result.iterations_completed}")
+                
+                if review_result.has_quality_issues:
+                    if review_result.todos_found:
+                        print(f"           TODOs found: {len(review_result.todos_found)}")
+                    if review_result.quality_gates_failed:
+                        print(f"           Quality gates failed: {len(review_result.quality_gates_failed)}")
+            
+            return review_result
+            
+        except Exception as e:
+            logging.error(f"Stage code review failed for stage {stage_num}: {e}")
+            return CodeReviewResult(
+                success=False,
+                quality_score=0.0,
+                todos_found=[],
+                quality_gates_failed=[f"Stage code review exception: {str(e)}"],
+                recommendations=["Debug and retry stage code review"],
+                report_file=f"code_review_stage_{stage_num}_error.md"
+            )
     
     def execute_milestone(self, milestone: Dict, stage_num: int) -> Dict:
         """Execute a single milestone"""
@@ -667,6 +793,14 @@ class MilestoneOrchestrator:
             # Milestone validation
             milestone_success = self.validate_milestone_completion(milestone, results)
             
+            # Conduct code review if milestone succeeded and code review is enabled
+            code_review_result = None
+            if milestone_success and self.config.get("code_review", {}).get("enabled", True):
+                code_review_result = self.conduct_milestone_code_review(milestone_id, milestone, stage_num)
+                if not code_review_result.success and code_review_result.has_quality_issues:
+                    milestone_success = False
+                    logging.warning(f"Milestone {milestone_id} failed code review quality gates")
+            
             # Update TASKS.md
             if milestone_success:
                 self.update_tasks_file(milestone, results)
@@ -678,7 +812,14 @@ class MilestoneOrchestrator:
                 "milestone_id": milestone_id,
                 "success": milestone_success,
                 "duration": duration,
-                "task_results": [{"task_id": r.task_id, "success": r.success} for r in results]
+                "task_results": [{"task_id": r.task_id, "success": r.success} for r in results],
+                "code_review": {
+                    "conducted": code_review_result is not None,
+                    "success": code_review_result.success if code_review_result else True,
+                    "quality_score": code_review_result.quality_score if code_review_result else 1.0,
+                    "report_file": code_review_result.report_file if code_review_result else None,
+                    "iterations": code_review_result.iterations_completed if code_review_result else 0
+                }
             }
             
         except Exception as e:
@@ -689,6 +830,46 @@ class MilestoneOrchestrator:
                 "error": str(e),
                 "duration": time.time() - milestone_start_time
             }
+    
+    def conduct_milestone_code_review(self, milestone_id: str, milestone: Dict, stage_num: int) -> CodeReviewResult:
+        """Conduct iterative code review for a milestone"""
+        logging.info(f"Conducting code review for milestone {milestone_id}")
+        
+        if self.verbose:
+            print(f"      → Running code review for {milestone_id}...")
+        
+        worktree_path = self.state.state.get("worktree_paths", {}).get(milestone_id)
+        
+        try:
+            # Conduct initial code review with iterative improvement
+            review_result = self.code_reviewer.conduct_code_review(
+                milestone_id, 
+                worktree_path=worktree_path, 
+                review_type="milestone"
+            )
+            
+            if self.verbose:
+                status = "[OK]" if review_result.success and not review_result.has_quality_issues else "[NEEDS_WORK]"
+                print(f"      {status} Code review completed - Score: {review_result.quality_score:.2f}, Iterations: {review_result.iterations_completed}")
+                
+                if review_result.has_quality_issues:
+                    if review_result.todos_found:
+                        print(f"           TODOs found: {len(review_result.todos_found)}")
+                    if review_result.quality_gates_failed:
+                        print(f"           Quality gates failed: {len(review_result.quality_gates_failed)}")
+                
+            return review_result
+            
+        except Exception as e:
+            logging.error(f"Code review failed for milestone {milestone_id}: {e}")
+            return CodeReviewResult(
+                success=False,
+                quality_score=0.0,
+                todos_found=[],
+                quality_gates_failed=[f"Code review exception: {str(e)}"],
+                recommendations=["Debug and retry code review"],
+                report_file=f"code_review_{milestone_id}_error.md"
+            )
     
     def execute_task_group(self, tasks: List[Dict], milestone_id: str) -> List[TaskResult]:
         """Execute a group of tasks in parallel"""

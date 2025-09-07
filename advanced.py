@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import tempfile
 import shutil
 import re
+import uuid
 
 @dataclass
 class ValidationResult:
@@ -35,6 +36,21 @@ class ValidationResult:
     
     def add_warning(self, warning: str):
         self.warnings.append(warning)
+
+@dataclass
+class CodeReviewResult:
+    """Result of code review process"""
+    success: bool
+    quality_score: float
+    todos_found: List[str]
+    quality_gates_failed: List[str]
+    recommendations: List[str]
+    report_file: str
+    iterations_completed: int = 0
+    
+    @property
+    def has_quality_issues(self) -> bool:
+        return len(self.todos_found) > 0 or len(self.quality_gates_failed) > 0 or self.quality_score < 0.8
 
 class RateLimitManager:
     """Manages API rate limiting with intelligent backoff"""
@@ -739,6 +755,286 @@ class MilestoneValidator:
         
         score = max(0.0, min(1.0, base_score - error_penalty - warning_penalty + bonus))
         return score
+
+class CodeReviewManager:
+    """Manages code review processes with iterative improvement"""
+    
+    def __init__(self, claude_wrapper: ClaudeCodeWrapper, config: Dict = None):
+        self.claude_wrapper = claude_wrapper
+        self.config = config or {}
+        self.max_iterations = self.config.get("code_review", {}).get("max_iterations", 3)
+        self.quality_threshold = self.config.get("code_review", {}).get("quality_threshold", 0.8)
+        self.auto_fix = self.config.get("code_review", {}).get("auto_fix", True)
+        
+    def conduct_code_review(self, milestone_id: str, worktree_path: Optional[str] = None, 
+                          review_type: str = "milestone") -> CodeReviewResult:
+        """Conduct comprehensive code review with iterative improvement"""
+        logging.info(f"Starting code review for {review_type}: {milestone_id}")
+        
+        # Generate unique review ID
+        review_id = f"{milestone_id}-{review_type}-{uuid.uuid4().hex[:8]}"
+        report_file = f"code_review_{review_id}.md"
+        
+        iterations_completed = 0
+        final_result = None
+        
+        for iteration in range(self.max_iterations):
+            iterations_completed = iteration + 1
+            
+            logging.info(f"Code review iteration {iteration + 1}/{self.max_iterations}")
+            
+            # Perform code review
+            review_result = self._perform_single_review(
+                milestone_id, worktree_path, report_file, iteration + 1, review_type
+            )
+            
+            if not review_result.success:
+                return review_result
+                
+            # Check if quality threshold is met and no issues remain
+            if not review_result.has_quality_issues:
+                logging.info(f"Code review completed successfully after {iteration + 1} iteration(s)")
+                final_result = review_result
+                break
+                
+            # If auto-fix is enabled and there are issues, try to fix them
+            if self.auto_fix and review_result.has_quality_issues:
+                logging.info(f"Quality issues found, attempting auto-fix (iteration {iteration + 1})")
+                fix_success = self._attempt_auto_fix(review_result, worktree_path)
+                if not fix_success:
+                    logging.warning("Auto-fix failed, manual intervention required")
+                    final_result = review_result
+                    break
+            else:
+                final_result = review_result
+                break
+        
+        if final_result is None:
+            final_result = CodeReviewResult(
+                success=False,
+                quality_score=0.0,
+                todos_found=["Review process failed"],
+                quality_gates_failed=["Maximum iterations exceeded"],
+                recommendations=["Manual review required"],
+                report_file=report_file,
+                iterations_completed=iterations_completed
+            )
+        
+        final_result.iterations_completed = iterations_completed
+        logging.info(f"Code review completed with {iterations_completed} iteration(s), final score: {final_result.quality_score:.2f}")
+        
+        return final_result
+    
+    def _perform_single_review(self, milestone_id: str, worktree_path: Optional[str], 
+                              report_file: str, iteration: int, review_type: str) -> CodeReviewResult:
+        """Perform a single code review iteration"""
+        
+        # Prepare code review task
+        review_task = {
+            "id": f"code-review-{milestone_id}-{iteration}",
+            "title": f"Code Review - {milestone_id} (Iteration {iteration})",
+            "requirements": self._prepare_code_review_requirements(milestone_id, review_type),
+            "acceptance_criteria": self._prepare_code_review_acceptance_criteria(),
+            "milestone_id": milestone_id
+        }
+        
+        try:
+            # Execute code review
+            result = self.claude_wrapper.execute_task(review_task, worktree_path)
+            
+            if not result.success:
+                return CodeReviewResult(
+                    success=False,
+                    quality_score=0.0,
+                    todos_found=[],
+                    quality_gates_failed=[f"Code review execution failed: {result.error}"],
+                    recommendations=["Fix execution issues and retry"],
+                    report_file=report_file
+                )
+            
+            # Parse review results
+            return self._parse_review_results(result.output, report_file)
+            
+        except Exception as e:
+            logging.error(f"Code review failed: {e}")
+            return CodeReviewResult(
+                success=False,
+                quality_score=0.0,
+                todos_found=[],
+                quality_gates_failed=[f"Exception during review: {str(e)}"],
+                recommendations=["Debug and fix review process"],
+                report_file=report_file
+            )
+    
+    def _prepare_code_review_requirements(self, milestone_id: str, review_type: str) -> str:
+        """Prepare requirements for code review task"""
+        return f"""
+Conduct a comprehensive code review for {review_type}: {milestone_id}
+
+REVIEW SCOPE:
+- Analyze all files changed/created for this {review_type}
+- Check code quality, architecture, and best practices
+- Identify TODOs, FIXMEs, and incomplete implementations
+- Verify quality gates are met
+- Assess overall implementation quality
+
+QUALITY GATES TO CHECK:
+1. Code builds without errors
+2. All tests pass (if tests exist)
+3. Code follows project conventions
+4. No security vulnerabilities
+5. Performance considerations addressed
+6. Documentation is adequate
+7. Error handling is proper
+8. Code is maintainable and readable
+
+OUTPUT REQUIREMENTS:
+- Generate a markdown report file: code_review_{milestone_id}_{review_type}.md
+- Include a quality score (0.0 to 1.0)
+- List all TODOs and FIXMEs found
+- Document failed quality gates
+- Provide specific recommendations for improvement
+- Include file-by-file analysis if applicable
+
+CRITICAL: This review must result in the creation of a detailed markdown report file.
+"""
+    
+    def _prepare_code_review_acceptance_criteria(self) -> str:
+        """Prepare acceptance criteria for code review"""
+        return f"""
+ACCEPTANCE CRITERIA:
+1. A comprehensive markdown report file is created
+2. Quality score is calculated and documented
+3. All TODOs and FIXMEs are identified and listed
+4. Failed quality gates are clearly documented
+5. Specific, actionable recommendations are provided
+6. Overall assessment includes pass/fail decision based on quality threshold ({self.quality_threshold})
+
+SUCCESS CRITERIA:
+- Report file is generated and readable
+- Quality analysis is thorough and accurate
+- Recommendations are specific and implementable
+"""
+    
+    def _parse_review_results(self, output: str, report_file: str) -> CodeReviewResult:
+        """Parse code review results from Claude output"""
+        
+        # Extract quality score
+        quality_score = 0.8  # Default
+        quality_match = re.search(r'[Qq]uality [Ss]core:?\s*([\d.]+)', output)
+        if quality_match:
+            try:
+                quality_score = float(quality_match.group(1))
+            except ValueError:
+                pass
+        
+        # Extract TODOs
+        todos_found = []
+        todo_pattern = r'(?:TODO|FIXME|XXX)(?:\([^)]*\))?:?\s*(.+)'
+        todos_found.extend(re.findall(todo_pattern, output, re.IGNORECASE | re.MULTILINE))
+        
+        # Extract failed quality gates
+        quality_gates_failed = []
+        gates_pattern = r'(?:FAILED|FAIL|❌)(?:\s*:)?\s*(.+?)(?:\n|$)'
+        quality_gates_failed.extend(re.findall(gates_pattern, output, re.MULTILINE))
+        
+        # Extract recommendations
+        recommendations = []
+        rec_pattern = r'(?:RECOMMENDATION|RECOMMEND|➤)(?:\s*:)?\s*(.+?)(?:\n|$)'
+        recommendations.extend(re.findall(rec_pattern, output, re.MULTILINE))
+        
+        # If no specific recommendations found, look for bullet points in recommendation sections
+        if not recommendations:
+            rec_section = re.search(r'[Rr]ecommendation[s]?:?\s*(.*?)(?:\n\n|\n[A-Z]|$)', output, re.DOTALL | re.MULTILINE)
+            if rec_section:
+                bullet_recs = re.findall(r'^[-*•]\s*(.+?)$', rec_section.group(1), re.MULTILINE)
+                recommendations.extend(bullet_recs)
+        
+        success = quality_score >= self.quality_threshold and not quality_gates_failed
+        
+        return CodeReviewResult(
+            success=success,
+            quality_score=quality_score,
+            todos_found=todos_found,
+            quality_gates_failed=quality_gates_failed,
+            recommendations=recommendations,
+            report_file=report_file
+        )
+    
+    def _attempt_auto_fix(self, review_result: CodeReviewResult, worktree_path: Optional[str]) -> bool:
+        """Attempt to automatically fix issues found in code review"""
+        if not self.auto_fix or not review_result.has_quality_issues:
+            return True
+        
+        logging.info("Attempting auto-fix of code review issues")
+        
+        # Prepare auto-fix task based on review results
+        fix_recommendations = review_result.recommendations[:5]  # Limit to top 5
+        fix_todos = review_result.todos_found[:10]  # Limit to top 10
+        
+        fix_task = {
+            "id": f"auto-fix-{uuid.uuid4().hex[:8]}",
+            "title": "Auto-fix Code Review Issues",
+            "requirements": self._prepare_auto_fix_requirements(fix_recommendations, fix_todos, review_result.quality_gates_failed),
+            "acceptance_criteria": self._prepare_auto_fix_acceptance_criteria(),
+            "milestone_id": "auto-fix"
+        }
+        
+        try:
+            result = self.claude_wrapper.execute_task(fix_task, worktree_path)
+            if result.success:
+                logging.info("Auto-fix completed successfully")
+                return True
+            else:
+                logging.warning(f"Auto-fix failed: {result.error}")
+                return False
+        except Exception as e:
+            logging.error(f"Auto-fix exception: {e}")
+            return False
+    
+    def _prepare_auto_fix_requirements(self, recommendations: List[str], todos: List[str], failed_gates: List[str]) -> str:
+        """Prepare requirements for auto-fix task"""
+        req = "Fix the following code review issues:\n\n"
+        
+        if recommendations:
+            req += "RECOMMENDATIONS TO IMPLEMENT:\n"
+            for i, rec in enumerate(recommendations, 1):
+                req += f"{i}. {rec}\n"
+            req += "\n"
+        
+        if todos:
+            req += "TODOs TO ADDRESS:\n"
+            for i, todo in enumerate(todos, 1):
+                req += f"{i}. {todo}\n"
+            req += "\n"
+        
+        if failed_gates:
+            req += "QUALITY GATES TO FIX:\n"
+            for i, gate in enumerate(failed_gates, 1):
+                req += f"{i}. {gate}\n"
+            req += "\n"
+        
+        req += """
+CRITICAL INSTRUCTIONS:
+1. Address as many issues as possible while maintaining code functionality
+2. Make minimal, focused changes that resolve the specific issues
+3. Ensure all changes follow project conventions
+4. Test that your changes don't break existing functionality
+5. Use Write, Edit, or MultiEdit tools to make actual file changes
+"""
+        
+        return req
+    
+    def _prepare_auto_fix_acceptance_criteria(self) -> str:
+        """Prepare acceptance criteria for auto-fix"""
+        return """
+ACCEPTANCE CRITERIA:
+1. Code review issues are resolved without breaking functionality
+2. Changes follow project coding conventions
+3. All file modifications are completed using appropriate tools
+4. No new issues are introduced during the fix process
+5. Code still builds and runs correctly after fixes
+"""
 
 # Utility functions
 def setup_logging_for_module():
