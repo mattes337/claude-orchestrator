@@ -523,16 +523,58 @@ Begin implementation now using the appropriate file creation tools."""
                 use_shell = platform.system() == "Windows"
                 
                 logging.debug(f"Executing Claude command: {' '.join(cmd)}")
-                result = subprocess.run(
+                print(f"        🤖 Starting Claude Code execution (timeout: {timeout}s)...")
+                
+                # Start the process
+                process = subprocess.Popen(
                     cmd,
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
-                    timeout=timeout,
-                    check=False,
                     shell=use_shell,
                     encoding='utf-8',
-                    errors='replace'  # Replace invalid characters instead of failing
+                    errors='replace'
                 )
+                
+                # Show progress dots while waiting
+                import threading
+                import sys
+                def show_progress():
+                    dots = 0
+                    while process.poll() is None:
+                        sys.stdout.write('.')
+                        sys.stdout.flush()
+                        dots += 1
+                        if dots % 50 == 0:  # New line every 50 dots
+                            print(f" ({dots}s)")
+                        time.sleep(1)
+                
+                progress_thread = threading.Thread(target=show_progress, daemon=True)
+                progress_thread.start()
+                
+                try:
+                    stdout, stderr = process.communicate(timeout=timeout)
+                    print()  # New line after progress dots
+                    print(f"        ✓ Claude Code execution completed (return code: {process.returncode})")
+                    
+                    result_obj = type('Result', (), {
+                        'returncode': process.returncode,
+                        'stdout': stdout,
+                        'stderr': stderr
+                    })()
+                    result = result_obj
+                    
+                except subprocess.TimeoutExpired:
+                    print()  # New line after progress dots
+                    print(f"        ⏰ Claude Code execution timed out after {timeout}s")
+                    process.kill()
+                    stdout, stderr = process.communicate()
+                    result_obj = type('Result', (), {
+                        'returncode': -1,
+                        'stdout': stdout,
+                        'stderr': f"Execution timed out after {timeout} seconds"
+                    })()
+                    result = result_obj
                 
                 logging.debug(f"Command completed with return code: {result.returncode}")
                 if result.stderr:

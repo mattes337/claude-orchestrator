@@ -813,7 +813,9 @@ class MilestoneOrchestrator:
                     print(f"        Estimated time: {task.get('estimated_time', 'unknown')} minutes")
                     if self.state.state["worktree_paths"].get(milestone_id):
                         print(f"        Worktree: {self.state.state['worktree_paths'][milestone_id]}")
-                    print(f"        Starting Claude Code execution...")
+                else:
+                    # Even in non-verbose mode, show what task is being executed
+                    print(f"      Executing: {task.get('title', task_id)}")
                 
                 result = self.claude_wrapper.execute_task(
                     task, 
