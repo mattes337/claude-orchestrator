@@ -1,17 +1,35 @@
 # Claude Code Orchestrator
 
-A powerful orchestration system for managing Claude Code development with parallel task execution, automatic resumption, and comprehensive monitoring.
+A powerful orchestration system for managing Claude Code development with parallel task execution, iterative code review, automatic git workflow, and comprehensive MCP server integration.
 
-## 🚀 Features
+## 🚀 Key Features
 
+### 🔄 **Advanced Code Review & Quality Gates**
+- **Iterative Code Review**: After each milestone completion with automatic improvement loops
+- **Quality Gates**: Configurable quality thresholds that must pass before progression
+- **Auto-Fix Functionality**: Automatically addresses TODOs, quality issues, and failed gates
+- **Markdown Reports**: Detailed review reports saved for each milestone and stage
+- **Multi-Stage Validation**: Final comprehensive review after stage completion
+
+### 🌳 **Intelligent Git Workflow**
+- **Worktree Isolation**: Each milestone runs in isolated git worktrees for true parallelism
+- **Automatic Commits**: Each worktree commits changes with detailed task summaries
+- **Sequential Merging**: Worktrees merge systematically into root branch with conflict resolution
+- **Stage Commits**: Complete stage commits to root branch with comprehensive change summaries
+- **Branch Management**: Automated branch creation, merging, and cleanup
+
+### 🔧 **MCP Server Integration**
+- **Context7 MCP**: Documentation research, project context consultation, and best practices
+- **Playwright MCP**: Browser testing, E2E testing, UI validation, and test automation
+- **Aceternity MCP**: Modern UI design patterns, component libraries, and styling guidance
+- **Smart Task Routing**: Automatically leverages appropriate MCP servers based on task content
+
+### ⚡ **Parallel Execution & Orchestration**
 - **Universal Milestone Format Support**: Automatically processes any milestone format without requiring specific schemas
 - **Intelligent Preprocessing**: Detects and normalizes different milestone structures (Task sections, Technical Requirements, Objectives)
-- **Parallel Execution**: Run multiple Claude Code instances for tasks within a stage
+- **Parallel Stage Execution**: Run multiple milestone worktrees simultaneously within a stage
 - **Sequential Stages**: Ensure proper dependency ordering between stages
-- **Git Worktree Isolation**: Each task runs in its own isolated environment
 - **Auto-Resume**: Automatically retry when rate limits are lifted
-- **Code Review Loop**: Automated review and remediation cycle
-- **Progress Tracking**: Real-time updates to TASKS.md
 - **Resource Monitoring**: Track system resources to prevent overload
 - **Cross-Platform**: Works on Windows, WSL, macOS, and Linux
 
@@ -218,16 +236,51 @@ python orchestrator.py --help
 ### Advanced Usage
 
 #### Custom Configuration
-Edit `orchestrator.config.json` to customize:
+Edit `orchestrator.config.json` to customize all features:
 ```json
 {
-  "max_parallel_tasks": 4,        # Number of parallel tasks
-  "claude_rate_limit_wait": 300,  # Wait time when rate limited (seconds)
-  "auto_resume": true,            # Enable auto-resume
-  "retry_attempts": 10,           # Max retry attempts
+  "milestones_dir": "milestones",
+  "tasks_file": "TASKS.md", 
+  "execution": {
+    "max_parallel_tasks": 4,        # Number of parallel milestones
+    "task_timeout": 1800,           # Task timeout in seconds
+    "max_retries": 3,               # Max retry attempts
+    "retry_delay": 30               # Delay between retries
+  },
+  "rate_limit": {
+    "requests_per_minute": 50,      # API rate limit
+    "burst_limit": 10,              # Burst request limit
+    "backoff_multiplier": 2         # Exponential backoff multiplier
+  },
+  "git": {
+    "use_worktrees": true,          # Enable worktree isolation
+    "base_branch": "main",          # Base branch for merging
+    "worktree_prefix": "milestone-" # Prefix for worktree directories
+  },
+  "code_review": {
+    "enabled": true,                # Enable code review system
+    "auto_fix": true,               # Enable automatic issue fixing
+    "quality_threshold": 0.8,       # Minimum quality score (0.0-1.0)
+    "max_iterations": 3             # Max review/fix iterations
+  },
+  "mcp_servers": {
+    "enabled": true,                # Enable MCP server integration
+    "context7": {
+      "enabled": true,              # Enable Context7 for documentation
+      "use_for": ["documentation", "research", "context"]
+    },
+    "playwright": {
+      "enabled": true,              # Enable Playwright for testing
+      "use_for": ["browser_testing", "e2e_testing", "ui_testing"]
+    },
+    "aceternity": {
+      "enabled": true,              # Enable Aceternity for UI design
+      "use_for": ["ui_design", "components", "styling"]
+    }
+  },
   "logging": {
-    "level": "INFO",             # Logging level
-    "log_dir": "./logs"          # Log directory
+    "level": "INFO",                # Logging level
+    "log_dir": "./logs"             # Log directory
   }
 }
 ```
@@ -365,19 +418,43 @@ Create the foundational project structure and configuration.
 - **Realistic Estimates**: Provide time estimates when possible
 - **Any Format**: Use whatever markdown structure works best for your team!
 
-## 🔄 Execution Flow
+## 🔄 Complete Execution Flow
 
-1. **Stage Discovery**: Finds the next unimplemented stage
-2. **Requirements Check**: Validates prerequisites are met
-3. **Parallel Task Execution**: 
-   - Creates worktrees for each task in the stage
-   - Runs Claude Code with milestone command
-   - Commits changes automatically
-4. **Code Review**: Performs automated review
-5. **Remediation**: Implements fixes if review fails
-6. **Merge**: Combines all task branches
-7. **Documentation**: Updates TASKS.md
-8. **Repeat**: Continues to next stage
+### **Stage-Level Orchestration**
+1. **Stage Discovery**: Discovers all milestones for the next unimplemented stage
+2. **Worktree Preparation**: Creates isolated git worktrees for each milestone in the stage
+3. **Parallel Execution**: Runs all milestones simultaneously within the stage
+
+### **Milestone-Level Processing**  
+4. **Requirements Check**: Validates prerequisites and dependencies are met
+5. **Task Execution**: 
+   - Runs Claude Code with MCP server integration
+   - Leverages Context7, Playwright, and Aceternity as appropriate
+   - Creates/modifies files with proper project structure
+6. **Milestone Code Review**:
+   - Comprehensive code review with quality gates
+   - Iterative improvement loops with auto-fix
+   - Quality score validation and TODO resolution
+7. **Worktree Commit**: Commits all milestone changes with detailed summaries
+
+### **Stage-Level Integration**
+8. **Sequential Worktree Merging**: 
+   - Merges each milestone worktree into root branch systematically
+   - Handles merge conflicts and validates integration
+   - Maintains clean commit history
+9. **Final Stage Code Review**: 
+   - Comprehensive review of integrated stage changes
+   - Final quality validation and improvement loops
+   - Stage-level quality gate verification
+10. **Stage Commit**: Commits complete stage with comprehensive change summary
+11. **Documentation**: Updates TASKS.md with milestone completion status
+12. **Repeat**: Continues to next stage until all stages complete
+
+### **Quality Gates & Review Process**
+- **Milestone Quality Gates**: Code builds, tests pass, conventions followed, security validated
+- **Iterative Improvement**: Auto-fix cycles continue until quality thresholds met
+- **Stage Validation**: Final comprehensive review ensures integration quality
+- **MCP Enhancement**: Context7, Playwright, and Aceternity provide specialized guidance
 
 ## 🛠️ Troubleshooting
 
@@ -485,33 +562,42 @@ For issues or questions:
 
 ## 🔮 Advanced Features
 
-### Milestone Preprocessor
+### **Code Review System**
+- **Iterative Review Process**: Multi-pass code review with improvement cycles
+- **Quality Score Calculation**: Numerical quality assessment (0.0 to 1.0)
+- **TODO/FIXME Detection**: Automatic identification and tracking of code issues
+- **Quality Gate Validation**: Configurable thresholds that must pass before progression
+- **Auto-Fix Engine**: Automatically implements fixes for common code review issues
+- **Markdown Report Generation**: Detailed review reports for each milestone and stage
+- **MCP-Enhanced Review**: Leverages specialized MCP servers for thorough analysis
+
+### **Git Workflow Management**
+- **Worktree Orchestration**: Creates and manages isolated development environments
+- **Automatic Commit Management**: Commits changes with detailed task summaries
+- **Sequential Merge Strategy**: Systematic integration of parallel development streams
+- **Branch Lifecycle Management**: Automated branch creation, merging, and cleanup
+- **Conflict Resolution Support**: Handles merge conflicts during integration
+- **Stage-Level Commits**: Comprehensive commits summarizing entire stage achievements
+
+### **MCP Server Integration**
+- **Context7 Integration**: Documentation research, best practices consultation, framework guidance
+- **Playwright Integration**: Browser testing automation, E2E test scenarios, UI validation
+- **Aceternity Integration**: Modern UI design patterns, component libraries, responsive layouts
+- **Smart Task Routing**: Automatically determines which MCP servers to leverage based on task content
+- **Enhanced Prompts**: All tasks and reviews include MCP server guidance for superior results
+
+### **Milestone Preprocessor**
 - **Universal Format Support**: Automatically detects and normalizes any milestone format
 - **Smart Task Extraction**: Converts various structures (Tasks, Requirements, Objectives) into executable units
 - **Pattern Recognition**: Supports multiple task definition patterns (`## Task N:`, `### N.`, etc.)
 - **Content Preservation**: Maintains all original milestone information and context
 - **Backward Compatibility**: Works seamlessly with existing milestone files
 
-### Rate Limit Manager
-- Tracks API rate limits
-- Implements exponential backoff
-- Persists state for resumption
-
-### System Monitor
-- Monitors CPU, memory, and disk usage
-- Prevents system overload
-- Logs performance metrics
-
-### Worktree Manager
-- Safe worktree creation
-- Automatic cleanup of stale worktrees
-- Validation of worktree health
-
-### Milestone Validator
-- Validates milestone completion
-- Checks test results
-- Ensures code quality standards
-- Flexible ID validation for different naming conventions
+### **System Management**
+- **Rate Limit Manager**: Tracks API limits, implements exponential backoff, persists state for resumption
+- **System Monitor**: Monitors CPU, memory, and disk usage; prevents system overload; logs performance metrics
+- **Worktree Manager**: Safe worktree creation, automatic cleanup of stale worktrees, validation of worktree health
+- **Milestone Validator**: Validates milestone completion, checks test results, ensures code quality standards
 
 ---
 
