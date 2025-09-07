@@ -1,0 +1,61 @@
+{
+  "milestones_dir": "milestones",
+  "tasks_file": "TASKS.md",
+  "execution": {
+    "max_parallel_tasks": 4,
+    "task_timeout": 1800,
+    "max_retries": 3,
+    "retry_delay": 30
+  },
+  "rate_limit": {
+    "requests_per_minute": 50,
+    "burst_limit": 10,
+    "backoff_multiplier": 2
+  },
+  "git": {
+    "use_worktrees": true,
+    "base_branch": "main",
+    "worktree_prefix": "milestone-"
+  },
+  "code_review": {
+    "enabled": true,
+    "auto_fix": true,
+    "quality_threshold": 0.8
+  },
+  "notifications": {
+    "enabled": false,
+    "webhook_url": "",
+    "discord_webhook": "",
+    "slack_webhook": ""
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "max_log_size": "10MB",
+    "backup_count": 5
+  },
+  "system": {
+    "cpu_threshold": 90.0,
+    "memory_threshold": 85.0,
+    "disk_threshold": 90.0,
+    "check_interval": 10
+  },
+  "validation": {
+    "required_fields": ["id", "title", "tasks"],
+    "task_required_fields": ["id", "title"],
+    "valid_priorities": ["high", "medium", "low"],
+    "max_tasks_per_milestone": 20,
+    "min_description_length": 10,
+    "quality_threshold": 0.8
+  },
+  "advanced": {
+    "enable_code_review": true,
+    "enable_auto_commit": true,
+    "enable_parallel_execution": true,
+    "enable_system_monitoring": true,
+    "enable_rate_limiting": true,
+    "enable_worktree_isolation": true,
+    "enable_auto_cleanup": true,
+    "enable_progress_reporting": true
+  }
+}

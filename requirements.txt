@@ -1,0 +1,154 @@
+# Claude Code Orchestrator - Python Dependencies
+
+# Core dependencies
+psutil>=5.9.0                # System monitoring and resource management
+requests>=2.31.0             # HTTP requests for webhooks and API calls
+
+# Development and testing (optional)
+pytest>=7.4.0                # Testing framework
+pytest-asyncio>=0.21.0       # Async testing support
+pytest-cov>=4.1.0            # Coverage reporting
+
+# Code quality (optional)
+black>=23.0.0                # Code formatting
+flake8>=6.0.0                # Linting
+mypy>=1.5.0                  # Type checking
+
+# Documentation (optional)
+sphinx>=7.0.0                # Documentation generation
+sphinx-rtd-theme>=1.3.0      # Documentation theme
+
+# Utility packages
+colorama>=0.4.6              # Cross-platform colored output
+rich>=13.0.0                 # Rich text and beautiful formatting
+click>=8.1.0                 # Command line interface creation
+pyyaml>=6.0                  # YAML configuration support
+toml>=0.10.2                 # TOML configuration support
+jsonschema>=4.17.0           # JSON schema validation
+
+# Git integration (optional - requires GitPython)
+GitPython>=3.1.32            # Git repository manipulation
+
+# Async support (for future enhancements)
+aiohttp>=3.8.5              # Async HTTP client
+aiofiles>=23.0.0             # Async file operations
+
+# Windows-specific dependencies (automatically installed on Windows)
+pywin32>=306; sys_platform == "win32"        # Windows API access
+wmi>=1.5.1; sys_platform == "win32"         # Windows Management Interface
+
+# Development tools (optional)
+pre-commit>=3.3.0            # Pre-commit hooks
+isort>=5.12.0                # Import sorting
+bandit>=1.7.5                # Security linting
+
+# Performance monitoring (optional)
+memory_profiler>=0.60.0      # Memory usage profiling
+line_profiler>=4.1.0         # Line-by-line profiling
+
+# Configuration management
+python-dotenv>=1.0.0         # Environment variable loading
+configparser>=5.3.0          # Configuration file parsing
+
+# Logging enhancements
+structlog>=23.1.0            # Structured logging
+loguru>=0.7.0                # Enhanced logging
+
+# Data serialization
+msgpack>=1.0.5               # Fast serialization
+
+# Network utilities
+netifaces>=0.11.0            # Network interface information
+speedtest-cli>=2.1.3         # Internet speed testing
+
+# File system utilities
+watchdog>=3.0.0              # File system event monitoring
+pathlib2>=2.3.7; python_version < "3.4"  # Backport for older Python
+
+# Date and time utilities
+python-dateutil>=2.8.2       # Date parsing and manipulation
+pytz>=2023.3                 # Timezone handling
+
+# JSON utilities
+ujson>=5.8.0                 # Ultra-fast JSON parsing
+orjson>=3.9.4                # Fast JSON library
+
+# Validation utilities
+cerberus>=1.3.4              # Data validation
+marshmallow>=3.20.0          # Object serialization/deserialization
+
+# Retry and backoff utilities
+tenacity>=8.2.0              # Retry library with various strategies
+backoff>=2.2.1               # Exponential backoff utilities
+
+# Progress bars and UI
+tqdm>=4.65.0                 # Progress bars
+prompt_toolkit>=3.0.39       # Interactive command line applications
+
+# Security utilities
+cryptography>=41.0.0         # Cryptographic recipes and primitives
+bcrypt>=4.0.1                # Password hashing
+
+# Database support (optional - for future state persistence)
+sqlalchemy>=2.0.0            # SQL toolkit and ORM
+sqlite3; python_version >= "3.0"  # SQLite database (built-in)
+
+# Cloud integration (optional)
+boto3>=1.28.0                # AWS SDK
+google-cloud-storage>=2.10.0 # Google Cloud Storage
+azure-storage-blob>=12.17.0  # Azure Blob Storage
+
+# Monitoring and metrics (optional)
+prometheus_client>=0.17.0    # Prometheus metrics
+statsd>=4.0.1                # StatsD metrics
+
+# Email notifications (optional)
+smtplib; python_version >= "3.0"  # SMTP client (built-in)
+email-validator>=2.0.0       # Email validation
+
+# Web framework (for future web interface)
+flask>=2.3.0                 # Lightweight web framework
+fastapi>=0.100.0             # Modern, fast web framework
+
+# API client utilities
+httpx>=0.24.0                # Modern HTTP client
+urllib3>=2.0.0               # HTTP client library
+
+# Text processing
+regex>=2023.6.3              # Advanced regular expressions
+beautifulsoup4>=4.12.0       # HTML/XML parsing
+lxml>=4.9.3                  # XML and HTML processing
+
+# Scientific computing (optional - for metrics analysis)
+numpy>=1.24.0                # Numerical computing
+pandas>=2.0.0                # Data analysis and manipulation
+matplotlib>=3.7.0            # Plotting library
+
+# Machine learning (optional - for predictive features)
+scikit-learn>=1.3.0          # Machine learning library
+joblib>=1.3.0                # Lightweight pipelining
+
+# Compression utilities
+lz4>=4.3.0                   # Fast compression
+zstandard>=0.21.0            # Zstandard compression
+
+# System integration
+schedule>=1.2.0              # Job scheduling
+apscheduler>=3.10.0          # Advanced Python Scheduler
+
+# Development server (for testing)
+gunicorn>=21.0.0             # WSGI HTTP Server
+uvicorn>=0.23.0              # ASGI server implementation
+
+# Documentation dependencies
+mkdocs>=1.5.0                # Project documentation
+mkdocs-material>=9.2.0       # Material theme for MkDocs
+
+# Testing utilities
+factory_boy>=3.3.0           # Test fixtures
+faker>=19.3.0                # Generate fake data
+responses>=0.23.0            # Mock HTTP requests
+
+# Performance optimization
+cython>=3.0.0                # C extensions for Python
+numba>=0.57.0                # JIT compiler for Python

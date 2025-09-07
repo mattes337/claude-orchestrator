@@ -1,0 +1,320 @@
+# Claude Code Orchestrator - Git Ignore Patterns
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+env/
+ENV/
+.venv
+.env
+.virtualenv
+pyvenv.cfg
+
+# IDE and Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Orchestrator State and Logs
+orchestrator_state.json
+orchestrator.log
+*.log
+logs/
+execution_report.json
+
+# Temporary Files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Git Worktrees
+worktrees/
+milestone-*/
+
+# Configuration Files (sensitive)
+orchestrator.config.local.json
+.env.local
+.env.production
+secrets.json
+
+# Test Coverage and Reports
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Profiling Data
+*.prof
+*.pstats
+
+# Documentation Build
+docs/_build/
+site/
+
+# Package Files
+*.tar.gz
+*.zip
+*.whl
+
+# System Files
+.cache/
+.local/
+.config/
+
+# Claude Code CLI
+.claude/
+claude_session.json
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+*.ipynb
+
+# Database Files
+*.db
+*.sqlite3
+*.sqlite
+
+# Backup Files
+*.bak
+*.backup
+*~
+
+# Lock Files
+poetry.lock
+Pipfile.lock
+
+# Node.js (if used for any tooling)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# Vim
+[._]*.s[a-v][a-z]
+!*.svg  # comment out if you don't need vector files
+[._]*.sw[a-p]
+[._]s[a-rt-v][a-z]
+[._]ss[a-gi-z]
+[._]sw[a-p]
+Session.vim
+Sessionx.vim
+.netrwhist
+*~
+tags
+[._]*.un~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# PyCharm
+.idea/
+*.iml
+*.ipr
+*.iws
+.idea_modules/
+
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Atom
+.atom/
+
+# Eclipse
+.metadata
+bin/
+tmp/
+*.tmp
+*.bak
+*.swp
+*~.nib
+local.properties
+.settings/
+.loadpath
+.recommenders
+.project
+.externalToolBuilders/
+*.launch
+.pydevproject
+.cproject
+.autotools
+.factorypath
+.buildpath
+.target
+
+# NetBeans
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+# JetBrains
+*.iml
+*.ipr
+*.iws
+.idea/
+out/
+
+# Microsoft Visual Studio
+.vs/
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Local Testing Files
+test_results/
+test_output/
+test_logs/
+
+# Performance and Monitoring Data
+*.perf
+*.prof
+monitoring_data/
+metrics/
+
+# Security and Authentication
+*.pem
+*.key
+*.crt
+*.p12
+auth_tokens.json
+api_keys.json
+
+# Cloud Configuration
+.aws/
+.gcloud/
+.azure/
+
+# Docker
+Dockerfile.local
+docker-compose.override.yml
+.dockerignore
+
+# Kubernetes
+*.kubeconfig
+k8s-local/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfplan
+*.tfvars
+
+# Ansible
+*.retry
+.vault_pass.txt
+
+# Monitoring Tools
+.prometheus/
+.grafana/
+elasticsearch/
+kibana/
+
+# Development Tools
+.pre-commit-config.local.yaml
+.flake8.local
+mypy.ini.local
+pylint.rc.local
+
+# Custom Ignore Patterns
+# Add your custom patterns below
+custom_temp/
+scratch/
+experimental/
