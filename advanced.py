@@ -507,16 +507,39 @@ SPECIFIC ACTIONS REQUIRED:
 - If this involves tests, create test files in the appropriate test directory
 - If this involves documentation, create or update relevant documentation files
 
+MCP SERVERS AVAILABLE:
+Use the following MCP servers when appropriate for enhanced capabilities:
+
+🔍 CONTEXT7 MCP - For documentation and research:
+- Use when you need to consult documentation or research best practices
+- Helpful for understanding project context and standards
+- Use for gathering information about frameworks, libraries, and patterns
+
+🎭 PLAYWRIGHT MCP - For browser testing and E2E testing:
+- Use when implementing testing functionality
+- Essential for UI testing, browser automation, and end-to-end tests
+- Use for creating test scenarios and validating user interactions
+
+🎨 ACETERNITY MCP - For UI design and components:
+- Use when creating UI components or styling
+- Provides modern design patterns and component libraries
+- Use for implementing responsive layouts and beautiful interfaces
+
 IMPLEMENTATION STEPS:
 1. Analyze the current project structure using available tools
-2. Determine the exact file paths needed for implementation
-3. Create or modify files using Write/Edit/MultiEdit tools
-4. Ensure all created files follow the project's conventions and structure
-5. Verify that your implementation meets all requirements and acceptance criteria
+2. Determine which MCP servers would be most helpful for this task
+3. Use relevant MCP servers for research, testing, or design guidance
+4. Determine the exact file paths needed for implementation
+5. Create or modify files using Write/Edit/MultiEdit tools
+6. Ensure all created files follow the project's conventions and structure
+7. If implementing UI components, leverage Aceternity MCP for modern designs
+8. If implementing testing, use Playwright MCP for comprehensive test coverage
+9. Use Context7 MCP for documentation consultation when needed
+10. Verify that your implementation meets all requirements and acceptance criteria
 
 IMPORTANT: This task will ONLY be marked as successful if you actually create or modify files. Simply acknowledging the task or providing code snippets without creating files will result in task failure.
 
-Begin implementation now using the appropriate file creation tools."""
+Begin implementation now using the appropriate file creation tools and MCP servers."""
         
         return prompt
     
@@ -888,6 +911,24 @@ QUALITY GATES TO CHECK:
 7. Error handling is proper
 8. Code is maintainable and readable
 
+MCP SERVERS FOR ENHANCED REVIEW:
+Use these MCP servers to provide more thorough code review:
+
+🔍 CONTEXT7 MCP - For documentation and standards review:
+- Consult documentation for best practices and standards
+- Research framework-specific patterns and conventions
+- Verify adherence to project architectural guidelines
+
+🎭 PLAYWRIGHT MCP - For testing review:
+- If tests are present, validate test coverage and quality
+- Suggest additional test scenarios for better coverage
+- Review browser testing implementations
+
+🎨 ACETERNITY MCP - For UI/UX review:
+- If UI components are present, review design patterns
+- Check for modern UI best practices and accessibility
+- Validate responsive design and user experience
+
 OUTPUT REQUIREMENTS:
 - Generate a markdown report file: code_review_{milestone_id}_{review_type}.md
 - Include a quality score (0.0 to 1.0)
@@ -895,8 +936,9 @@ OUTPUT REQUIREMENTS:
 - Document failed quality gates
 - Provide specific recommendations for improvement
 - Include file-by-file analysis if applicable
+- Use MCP servers to enhance review quality where applicable
 
-CRITICAL: This review must result in the creation of a detailed markdown report file.
+CRITICAL: This review must result in the creation of a detailed markdown report file with comprehensive analysis.
 """
     
     def _prepare_code_review_acceptance_criteria(self) -> str:
@@ -1015,12 +1057,28 @@ SUCCESS CRITERIA:
             req += "\n"
         
         req += """
+MCP SERVERS FOR ENHANCED FIXES:
+Use these MCP servers to implement better solutions:
+
+🔍 CONTEXT7 MCP - For research and documentation:
+- Research best practices for the issues being fixed
+- Consult documentation for proper implementation patterns
+
+🎭 PLAYWRIGHT MCP - For testing improvements:
+- When fixing testing-related issues
+- Implement comprehensive test coverage for fixes
+
+🎨 ACETERNITY MCP - For UI/UX fixes:
+- When fixing UI components or styling issues
+- Implement modern design patterns and accessibility improvements
+
 CRITICAL INSTRUCTIONS:
 1. Address as many issues as possible while maintaining code functionality
 2. Make minimal, focused changes that resolve the specific issues
 3. Ensure all changes follow project conventions
 4. Test that your changes don't break existing functionality
 5. Use Write, Edit, or MultiEdit tools to make actual file changes
+6. Leverage appropriate MCP servers for enhanced solutions
 """
         
         return req

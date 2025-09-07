@@ -306,6 +306,21 @@ class MilestoneOrchestrator:
                 "quality_threshold": 0.8,
                 "max_iterations": 3
             },
+            "mcp_servers": {
+                "enabled": True,
+                "context7": {
+                    "enabled": True,
+                    "use_for": ["documentation", "research", "context"]
+                },
+                "playwright": {
+                    "enabled": True,
+                    "use_for": ["browser_testing", "e2e_testing", "ui_testing"]
+                },
+                "aceternity": {
+                    "enabled": True,
+                    "use_for": ["ui_design", "components", "styling"]
+                }
+            },
             "notifications": {
                 "enabled": False,
                 "webhook_url": ""
@@ -621,6 +636,13 @@ class MilestoneOrchestrator:
                 logging.error(f"Stage {stage_num} failed final code review")
                 return False
         
+        # Commit the complete stage to the root branch
+        if stage_success:
+            commit_success = self.commit_stage_completion(stage_num, milestones)
+            if not commit_success:
+                logging.warning(f"Failed to commit stage {stage_num} completion")
+                # Don't fail the stage for commit issues, just warn
+        
         return stage_success
     
     def prepare_stage_worktrees(self, stage_num: int, milestones: List[Dict]):
@@ -744,6 +766,76 @@ class MilestoneOrchestrator:
                 report_file=f"code_review_stage_{stage_num}_error.md"
             )
     
+    def commit_stage_completion(self, stage_num: int, milestones: List[Dict]) -> bool:
+        """Commit the complete stage to the root branch"""
+        logging.info(f"Committing stage {stage_num} completion to root branch")
+        
+        if self.verbose:
+            print(f"  → Committing complete stage {stage_num} to root branch...")
+        
+        try:
+            # Check if there are any changes to commit
+            status_result = subprocess.run([
+                "git", "status", "--porcelain"
+            ], capture_output=True, text=True, encoding='utf-8', errors='replace')
+            
+            if not status_result.stdout.strip():
+                logging.info(f"No changes to commit for stage {stage_num}")
+                return True
+            
+            # Add all changes
+            add_result = subprocess.run([
+                "git", "add", "."
+            ], capture_output=True, text=True, encoding='utf-8', errors='replace')
+            
+            if add_result.returncode != 0:
+                logging.error(f"Failed to add changes for stage {stage_num}: {add_result.stderr}")
+                return False
+            
+            # Create comprehensive commit message
+            commit_message = f"Complete Stage {stage_num}: {len(milestones)} milestones integrated\n\n"
+            
+            commit_message += "Milestones completed in this stage:\n"
+            for milestone in milestones:
+                commit_message += f"- {milestone['id']}: {milestone['title']}\n"
+                tasks = milestone.get('tasks', [])
+                if tasks:
+                    for task in tasks[:3]:  # Show first 3 tasks
+                        commit_message += f"  • {task.get('title', task.get('id', 'Task'))}\n"
+                    if len(tasks) > 3:
+                        commit_message += f"  • ... and {len(tasks) - 3} more tasks\n"
+            
+            commit_message += "\n"
+            commit_message += "Stage completed with:\n"
+            commit_message += "- Individual milestone worktrees merged\n"
+            commit_message += "- Comprehensive code review conducted\n" 
+            commit_message += "- Quality gates validated\n"
+            commit_message += "- All changes integrated to main branch\n\n"
+            
+            commit_message += f"Stage {stage_num} represents a significant milestone in the project development.\n\n"
+            commit_message += "🤖 Generated with [Claude Code](https://claude.ai/code)\n\n"
+            commit_message += "Co-Authored-By: Claude <noreply@anthropic.com>"
+            
+            # Commit the stage
+            commit_result = subprocess.run([
+                "git", "commit", "-m", commit_message
+            ], capture_output=True, text=True, encoding='utf-8', errors='replace')
+            
+            if commit_result.returncode == 0:
+                logging.info(f"Successfully committed stage {stage_num} completion")
+                if self.verbose:
+                    print(f"  [STAGE_COMMITTED] Stage {stage_num}")
+                return True
+            else:
+                logging.error(f"Failed to commit stage {stage_num}: {commit_result.stderr}")
+                if self.verbose:
+                    print(f"  [STAGE_COMMIT_FAIL] Stage {stage_num}: {commit_result.stderr[:100]}")
+                return False
+                
+        except Exception as e:
+            logging.error(f"Exception during stage {stage_num} commit: {e}")
+            return False
+    
     def execute_milestone(self, milestone: Dict, stage_num: int) -> Dict:
         """Execute a single milestone"""
         milestone_id = milestone["id"]
@@ -800,6 +892,13 @@ class MilestoneOrchestrator:
                 if not code_review_result.success and code_review_result.has_quality_issues:
                     milestone_success = False
                     logging.warning(f"Milestone {milestone_id} failed code review quality gates")
+            
+            # Commit worktree changes if milestone succeeded
+            if milestone_success and self.config["git"]["use_worktrees"]:
+                commit_success = self.commit_milestone_worktree(milestone_id, milestone)
+                if not commit_success:
+                    logging.warning(f"Failed to commit worktree for milestone {milestone_id}")
+                    # Don't fail the milestone for commit issues, just warn
             
             # Update TASKS.md
             if milestone_success:
@@ -870,6 +969,79 @@ class MilestoneOrchestrator:
                 recommendations=["Debug and retry code review"],
                 report_file=f"code_review_{milestone_id}_error.md"
             )
+    
+    def commit_milestone_worktree(self, milestone_id: str, milestone: Dict) -> bool:
+        """Commit changes in a milestone worktree"""
+        worktree_path = self.state.state.get("worktree_paths", {}).get(milestone_id)
+        
+        if not worktree_path:
+            logging.warning(f"No worktree path found for milestone {milestone_id}")
+            return False
+        
+        logging.info(f"Committing worktree for milestone {milestone_id}")
+        
+        if self.verbose:
+            print(f"      → Committing worktree changes for {milestone_id}...")
+        
+        try:
+            original_cwd = os.getcwd()
+            os.chdir(worktree_path)
+            
+            try:
+                # Check if there are any changes to commit
+                status_result = subprocess.run([
+                    "git", "status", "--porcelain"
+                ], capture_output=True, text=True, encoding='utf-8', errors='replace')
+                
+                if not status_result.stdout.strip():
+                    logging.info(f"No changes to commit in worktree {milestone_id}")
+                    return True
+                
+                # Add all changes
+                add_result = subprocess.run([
+                    "git", "add", "."
+                ], capture_output=True, text=True, encoding='utf-8', errors='replace')
+                
+                if add_result.returncode != 0:
+                    logging.error(f"Failed to add changes in worktree {milestone_id}: {add_result.stderr}")
+                    return False
+                
+                # Commit changes
+                commit_message = f"Implement milestone {milestone_id}: {milestone['title']}\n\n"
+                
+                # Add task details to commit message
+                tasks = milestone.get("tasks", [])
+                if tasks:
+                    commit_message += "Tasks completed:\n"
+                    for task in tasks:
+                        commit_message += f"- {task.get('title', task.get('id', 'Unknown task'))}\n"
+                    commit_message += "\n"
+                
+                commit_message += f"Milestone completed as part of automated orchestration.\n\n"
+                commit_message += "🤖 Generated with [Claude Code](https://claude.ai/code)\n\n"
+                commit_message += "Co-Authored-By: Claude <noreply@anthropic.com>"
+                
+                commit_result = subprocess.run([
+                    "git", "commit", "-m", commit_message
+                ], capture_output=True, text=True, encoding='utf-8', errors='replace')
+                
+                if commit_result.returncode == 0:
+                    logging.info(f"Successfully committed worktree {milestone_id}")
+                    if self.verbose:
+                        print(f"      [COMMITTED] {milestone_id}")
+                    return True
+                else:
+                    logging.error(f"Failed to commit worktree {milestone_id}: {commit_result.stderr}")
+                    if self.verbose:
+                        print(f"      [COMMIT_FAIL] {milestone_id}: {commit_result.stderr[:100]}")
+                    return False
+                    
+            finally:
+                os.chdir(original_cwd)
+                
+        except Exception as e:
+            logging.error(f"Exception during commit of worktree {milestone_id}: {e}")
+            return False
     
     def execute_task_group(self, tasks: List[Dict], milestone_id: str) -> List[TaskResult]:
         """Execute a group of tasks in parallel"""
