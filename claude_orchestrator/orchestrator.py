@@ -356,21 +356,46 @@ class MilestoneOrchestrator:
     def discover_milestones(self) -> List[Dict]:
         """Discover and parse milestone files"""
         milestones_dir = Path(self.config["milestones_dir"])
+        logging.info(f"🔍 Starting milestone discovery in directory: {milestones_dir}")
+        
         if not milestones_dir.exists():
             raise FileNotFoundError(f"Milestones directory not found: {milestones_dir}")
         
+        # Log all files in the directory for debugging
+        all_files = list(milestones_dir.iterdir())
+        logging.info(f"📁 Found {len(all_files)} files/directories in {milestones_dir}:")
+        for file_path in all_files:
+            logging.info(f"  - {file_path.name} ({'file' if file_path.is_file() else 'directory'})")
+        
+        # Find all .md files
+        md_files = list(milestones_dir.glob("*.md"))
+        logging.info(f"📄 Found {len(md_files)} .md files:")
+        for md_file in md_files:
+            logging.info(f"  - {md_file.name}")
+        
         milestones = []
-        for milestone_file in milestones_dir.glob("*.md"):
+        for milestone_file in md_files:
+            logging.info(f"🔍 Processing milestone file: {milestone_file.name}")
             try:
                 milestone = self.parse_milestone_file(milestone_file)
                 if milestone:
+                    logging.info(f"✅ Successfully parsed milestone: {milestone['id']} (stage {milestone.get('stage', 'unknown')})")
                     milestones.append(milestone)
+                else:
+                    logging.warning(f"⚠️  Failed to parse milestone file (returned None): {milestone_file.name}")
             except Exception as e:
-                logging.error(f"Failed to parse milestone {milestone_file}: {e}")
+                logging.error(f"❌ Failed to parse milestone {milestone_file}: {e}")
         
         # Sort by milestone ID
         milestones.sort(key=lambda x: x["id"])
-        logging.info(f"Discovered {len(milestones)} milestones")
+        logging.info(f"📊 Discovery complete: {len(milestones)} milestones discovered")
+        
+        # Log milestone summary for debugging
+        if milestones:
+            logging.info("📋 Milestone summary:")
+            for milestone in milestones:
+                logging.info(f"  - {milestone['id']}: {milestone.get('title', 'No title')} (Stage {milestone.get('stage', 'unknown')}, {len(milestone.get('tasks', []))} tasks)")
+        
         return milestones
     
     def parse_milestone_file(self, filepath: Path) -> Optional[Dict]:
@@ -406,8 +431,21 @@ class MilestoneOrchestrator:
             stage_match = re.search(r'Stage:\s*(\d+)', normalized_content, re.IGNORECASE)
             stage = int(stage_match.group(1)) if stage_match else 1
             
+            # Additional stage detection methods for better compatibility
+            if stage == 1 and milestone_id:
+                # Try to extract stage from milestone ID patterns like "4a", "4b", "4c"
+                id_stage_match = re.search(r'^(\d+)[a-z]?', milestone_id)
+                if id_stage_match:
+                    potential_stage = int(id_stage_match.group(1))
+                    logging.info(f"🔍 Stage detection for {milestone_id}: Found stage {potential_stage} from milestone ID pattern")
+                    stage = potential_stage
+                else:
+                    logging.info(f"🔍 Stage detection for {milestone_id}: No stage found in ID, using default stage 1")
+            else:
+                logging.info(f"🔍 Stage detection for {milestone_id}: Explicit stage {stage} found in content")
+            
             # Log preprocessing success
-            logging.info(f"Successfully preprocessed {milestone_id}: {len(tasks)} tasks extracted")
+            logging.info(f"✅ Successfully preprocessed {milestone_id}: {len(tasks)} tasks extracted, assigned to stage {stage}")
             
             return {
                 "id": milestone_id,
@@ -466,16 +504,27 @@ class MilestoneOrchestrator:
     
     def organize_execution_stages(self, milestones: List[Dict]) -> Dict[int, List[Dict]]:
         """Organize milestones into execution stages"""
+        logging.info(f"🗂️  Organizing {len(milestones)} milestones into execution stages")
         stages = {}
         
         for milestone in milestones:
             stage = milestone.get("stage", 1)
+            milestone_id = milestone.get("id", "unknown")
+            logging.info(f"  📌 Milestone {milestone_id} assigned to stage {stage}")
+            
             if stage not in stages:
                 stages[stage] = []
             stages[stage].append(milestone)
         
-        # Sort stages
-        return dict(sorted(stages.items()))
+        # Sort stages and log results
+        sorted_stages = dict(sorted(stages.items()))
+        logging.info(f"📊 Stage organization complete - {len(sorted_stages)} stages created:")
+        
+        for stage_num, stage_milestones in sorted_stages.items():
+            milestone_ids = [m.get("id", "unknown") for m in stage_milestones]
+            logging.info(f"  📋 Stage {stage_num}: {len(stage_milestones)} milestones ({', '.join(milestone_ids)})")
+        
+        return sorted_stages
     
     def execute_milestones(self, milestones: List[Dict]) -> bool:
         """Execute all milestones organized by stages"""
