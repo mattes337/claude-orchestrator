@@ -81,8 +81,25 @@ class OrchestratorState:
         """Add entry to execution log"""
         timestamp = datetime.now().isoformat()
         self.state["execution_log"].append(f"[{timestamp}] {entry}")
-        if len(self.state["execution_log"]) > 1000:  # Keep last 1000 entries
-            self.state["execution_log"] = self.state["execution_log"][-1000:]
+    
+    def reset_state(self):
+        """Reset state to initial values"""
+        self.state = {
+            "current_stage": 0,
+            "completed_tasks": set(),
+            "failed_tasks": set(),
+            "skipped_tasks": set(),
+            "stage_results": {},
+            "last_checkpoint": None,
+            "total_start_time": None,
+            "rate_limit_resets": {},
+            "worktree_paths": {},
+            "execution_log": []
+        }
+        # Remove state file if it exists
+        if os.path.exists(self.state_file):
+            os.remove(self.state_file)
+        logging.info("Orchestrator state has been reset")
 
 class TaskResult:
     """Represents the result of a task execution"""
@@ -818,6 +835,8 @@ def main():
                       help="Show execution plan without running")
     parser.add_argument("--verbose", action="store_true",
                       help="Enable verbose output showing detailed progress")
+    parser.add_argument("--reset", action="store_true",
+                      help="Reset orchestrator state and start fresh")
     
     args = parser.parse_args()
     
@@ -825,6 +844,11 @@ def main():
         # Initialize orchestrator
         orchestrator = MilestoneOrchestrator(args.config)
         orchestrator.verbose = args.verbose
+        
+        # Reset state if requested
+        if args.reset:
+            orchestrator.state.reset_state()
+            print("Orchestrator state has been reset.")
         
         # Discover milestones
         milestones = orchestrator.discover_milestones()
