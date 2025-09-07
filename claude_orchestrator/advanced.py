@@ -469,7 +469,7 @@ class ClaudeCodeWrapper:
         milestone_id = task.get('milestone_id', 'unknown')
         
         # Generate specific, actionable prompt that instructs Claude CLI to create files
-        prompt = f"""You must implement: {task_title}
+        prompt = f"""TASK: {task_title}
 
 TASK ID: {task_id}
 MILESTONE: {milestone_id}
@@ -480,28 +480,37 @@ REQUIREMENTS:
 ACCEPTANCE CRITERIA:
 {acceptance_criteria}
 
-CRITICAL INSTRUCTIONS:
-1. You MUST create actual files using Write, Edit, or MultiEdit tools
-2. You MUST NOT just provide code examples or explanations
-3. File creation is REQUIRED for this task to be considered complete
-4. Use appropriate file paths based on the project structure
+🚨 CRITICAL INSTRUCTIONS - FILE CREATION REQUIRED 🚨
 
-SPECIFIC ACTIONS REQUIRED:
-- If this is a component task, create the component file in the appropriate directory (e.g., src/components/)
-- If this involves configuration, create or modify configuration files
-- If this involves tests, create test files in the appropriate test directory
-- If this involves documentation, create or update relevant documentation files
+You MUST create actual files to complete this task. This is NOT a discussion or planning task.
 
-IMPLEMENTATION STEPS:
-1. Analyze the current project structure using available tools
-2. Determine the exact file paths needed for implementation
-3. Create or modify files using Write/Edit/MultiEdit tools
-4. Ensure all created files follow the project's conventions and structure
-5. Verify that your implementation meets all requirements and acceptance criteria
+MANDATORY ACTIONS:
+1. Use Read tool to examine the current project structure
+2. Use Write, Edit, or MultiEdit tools to create/modify the required files
+3. Create complete, working files (not code snippets or examples)
+4. Follow the project's existing patterns and conventions
 
-IMPORTANT: This task will ONLY be marked as successful if you actually create or modify files. Simply acknowledging the task or providing code snippets without creating files will result in task failure.
+FILE CREATION REQUIREMENTS:
+- For components: Create in src/components/ with proper React/TypeScript structure
+- For utilities: Create in src/utils/ or appropriate utility directory
+- For tests: Create test files in __tests__/ or alongside source files
+- For configuration: Update/create config files in project root
 
-Begin implementation now using the appropriate file creation tools."""
+VERIFICATION STEPS:
+1. After creating files, verify they exist using Read tool
+2. Ensure all imports and dependencies are correctly set up
+3. Check that the created files integrate properly with existing code
+
+⚠️  WARNING: Tasks are automatically validated by checking for actual file changes.
+    If no files are created or modified, this task will be marked as FAILED and retried.
+
+SUCCESS INDICATORS:
+When you create files, explicitly state: "Successfully created file: [filename]"
+When you modify files, explicitly state: "Successfully modified file: [filename]"
+
+DO NOT provide explanations without implementation.
+DO NOT ask clarifying questions - implement based on the requirements provided.
+START IMPLEMENTATION IMMEDIATELY using file creation tools."""
         
         return prompt
     
@@ -642,10 +651,17 @@ Begin implementation now using the appropriate file creation tools."""
         if result["returncode"] != 0:
             return False
         
+        # Check for file creation indicators (more specific)
+        file_creation_indicators = [
+            "created", "wrote", "written", "saved", "generated",
+            "file created", "component created", "added file",
+            "successfully created", "implementation complete"
+        ]
+        
         # Check for common success indicators
         success_indicators = [
             "Task completed successfully",
-            "Implementation complete",
+            "Implementation complete", 
             "All tests passing",
             "[SUCCESS]",
             "Success"
@@ -664,13 +680,38 @@ Begin implementation now using the appropriate file creation tools."""
         has_success = any(indicator in output for indicator in success_indicators)
         has_errors = any(indicator in output for indicator in error_indicators)
         
+        # Check for file creation indicators first (more reliable)
+        has_file_creation = any(indicator in output.lower() for indicator in file_creation_indicators)
+        
         # If we have explicit success indicators and no errors, consider successful
-        if has_success and not has_errors:
+        if (has_success or has_file_creation) and not has_errors:
             return True
         
         # If we have errors but no success, consider failed
-        if has_errors and not has_success:
+        if has_errors and not (has_success or has_file_creation):
             return False
+        
+        # Check for actual file changes using git status (if in a git repo)
+        try:
+            import subprocess
+            import os
+            
+            # Check if we're in a git repository and have changes
+            git_result = subprocess.run(
+                ['git', 'status', '--porcelain'],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                cwd=os.getcwd()
+            )
+            
+            if git_result.returncode == 0 and git_result.stdout.strip():
+                logging.info(f"Detected git changes, considering task successful: {git_result.stdout.strip()[:100]}")
+                return True
+                
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+            # Git not available or not a git repo, skip this check
+            pass
         
         # Otherwise, assume success if the command completed without error
         return len(output.strip()) > 0

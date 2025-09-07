@@ -835,8 +835,17 @@ class MilestoneOrchestrator:
                     if result.success:
                         print(f"        Duration: {getattr(result, 'duration', 0):.1f}s")
                         if hasattr(result, 'output') and result.output:
-                            preview = result.output[:150].replace('\n', ' ')
-                            print(f"        Output preview: {preview}{'...' if len(result.output) > 150 else ''}")
+                            preview = result.output[:200].replace('\n', ' ')
+                            print(f"        Output preview: {preview}{'...' if len(result.output) > 200 else ''}")
+                            
+                            # Check for file creation keywords in output
+                            output_lower = result.output.lower()
+                            file_creation_words = ["created", "wrote", "written", "saved", "generated"]
+                            found_creation = [word for word in file_creation_words if word in output_lower]
+                            if found_creation:
+                                print(f"        ✓ File creation detected: {', '.join(found_creation)}")
+                            else:
+                                print(f"        ⚠️  No file creation keywords found in output")
                 else:
                     # In normal mode, still show task progress
                     status = "✓" if result.success else "✗"
