@@ -204,7 +204,7 @@ class MilestoneOrchestrator:
         )
         self.system_monitor = SystemMonitor()
         self.worktree_manager = WorktreeManager()
-        self.claude_wrapper = ClaudeCodeWrapper()
+        self.claude_wrapper = ClaudeCodeWrapper(config=self.config)
         self.validator = MilestoneValidator()
         self.preprocessor = MilestonePreprocessor()
         
@@ -291,6 +291,12 @@ class MilestoneOrchestrator:
                 "requests_per_minute": 50,
                 "burst_limit": 10,
                 "backoff_multiplier": 2
+            },
+            "claude": {
+                "model": "sonnet",
+                "plan_model": "opus", 
+                "dev_model": "sonnet",
+                "timeout": 1800
             },
             "git": {
                 "use_worktrees": True,
@@ -844,15 +850,27 @@ class MilestoneOrchestrator:
                     error_details = f"Task {task_id} failed (attempt {attempt + 1}): {result.error}"
                     logging.warning(error_details)
                     
+                    # Check if this was a rate limit error
+                    is_rate_limited = hasattr(result, 'rate_limited') and getattr(result, 'rate_limited', False)
+                    
                     # Print error details in verbose mode
                     if self.verbose:
                         print(f"      [ERR] {error_details}")
+                        if is_rate_limited:
+                            print(f"      Rate limit detected: {getattr(result, 'rate_limit_reason', 'Unknown')}")
                         if hasattr(result, 'output') and result.output:
                             print(f"      Output: {result.output[:200]}...")  # First 200 chars
                     
                     if attempt < max_retries:
-                        wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
-                        logging.info(f"Retrying task {task_id} in {wait_time}s")
+                        if is_rate_limited:
+                            # Longer wait for rate limits (5-30 minutes)
+                            wait_time = 300 * (2 ** attempt)  # 5min, 10min, 20min
+                            print(f"      ⏳ Rate limit detected, waiting {wait_time//60} minutes before retry...")
+                            logging.info(f"Rate limit retry for task {task_id} in {wait_time}s")
+                        else:
+                            # Normal exponential backoff
+                            wait_time = retry_delay * (2 ** attempt)
+                            logging.info(f"Retrying task {task_id} in {wait_time}s")
                         time.sleep(wait_time)
             
             except Exception as e:
@@ -1006,6 +1024,12 @@ def main():
                       help="Enable verbose output showing detailed progress")
     parser.add_argument("--reset", action="store_true",
                       help="Reset orchestrator state and start fresh")
+    parser.add_argument("--model", choices=["opus", "sonnet", "haiku"], 
+                      help="Model to use for Claude Code execution (opus, sonnet, haiku)")
+    parser.add_argument("--plan-model", choices=["opus", "sonnet", "haiku"],
+                      help="Model to use for planning phase (default: opus)")
+    parser.add_argument("--dev-model", choices=["opus", "sonnet", "haiku"], 
+                      help="Model to use for development phase (default: sonnet)")
     
     args = parser.parse_args()
     
@@ -1013,6 +1037,17 @@ def main():
         # Initialize orchestrator
         orchestrator = MilestoneOrchestrator(args.config)
         orchestrator.verbose = args.verbose
+        
+        # Set model preferences
+        if not "claude" in orchestrator.config:
+            orchestrator.config["claude"] = {}
+        
+        if args.model:
+            orchestrator.config["claude"]["model"] = args.model
+        if args.plan_model:
+            orchestrator.config["claude"]["plan_model"] = args.plan_model  
+        if args.dev_model:
+            orchestrator.config["claude"]["dev_model"] = args.dev_model
         
         # Reset state if requested
         if args.reset:

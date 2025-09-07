@@ -350,7 +350,7 @@ class WorktreeManager:
 class ClaudeCodeWrapper:
     """Wrapper for Claude Code CLI interactions"""
     
-    def __init__(self, claude_path: str = "claude"):
+    def __init__(self, claude_path: str = "claude", config: Dict = None):
         # Try to find the full path to claude command
         import shutil
         if claude_path == "claude":
@@ -374,6 +374,7 @@ class ClaudeCodeWrapper:
         else:
             self.claude_path = claude_path
             
+        self.config = config or {}
         self.session_id = None
         self.default_timeout = 300
         
@@ -518,12 +519,21 @@ Begin implementation now using the appropriate file creation tools."""
                 with open(prompt_file, 'r', encoding='utf-8') as f:
                     prompt_content = f.read()
                 
-                cmd = [self.claude_path, "--print", prompt_content]
+                # Determine which model to use based on task type
+                claude_config = self.config.get("claude", {})
+                task_type = task.get("type", "development")  # plan or development
+                
+                if task_type == "plan":
+                    model = claude_config.get("plan_model", claude_config.get("model", "opus"))
+                else:
+                    model = claude_config.get("dev_model", claude_config.get("model", "sonnet"))
+                
+                cmd = [self.claude_path, "--print", "--model", model, prompt_content]
                 import platform
                 use_shell = platform.system() == "Windows"
                 
                 logging.debug(f"Executing Claude command: {' '.join(cmd)}")
-                print(f"        🤖 Starting Claude Code execution (timeout: {timeout}s)...")
+                print(f"        🤖 Starting Claude Code execution (model: {model}, timeout: {timeout}s)...")
                 
                 # Start the process
                 process = subprocess.Popen(
@@ -608,10 +618,29 @@ Begin implementation now using the appropriate file creation tools."""
     
     def _analyze_result(self, result: Dict[str, Any], task: Dict[str, Any]) -> bool:
         """Analyze Claude Code execution result"""
+        output = result.get("output", "")
+        error = result.get("error", "")
+        
+        # Check for rate limit or quota errors in Claude Code
+        error_lower = error.lower() if error else ""
+        output_lower = output.lower() if output else ""
+        
+        rate_limit_indicators = [
+            "rate limit", "quota exceeded", "too many requests", 
+            "usage limit", "daily limit", "monthly limit",
+            "you have reached your", "5 hour limit", "5-hour limit"
+        ]
+        
+        for indicator in rate_limit_indicators:
+            if indicator in error_lower or indicator in output_lower:
+                logging.warning(f"Claude Code rate limit detected: {indicator}")
+                # Store rate limit info for retry logic
+                result["rate_limited"] = True
+                result["rate_limit_reason"] = indicator
+                return False
+        
         if result["returncode"] != 0:
             return False
-        
-        output = result.get("output", "")
         
         # Check for common success indicators
         success_indicators = [
