@@ -274,10 +274,9 @@ class WorktreeManager:
                 encoding='utf-8', errors='replace'
             )
             
-            # Create worktree
+            # Create worktree using correct syntax: git worktree add -b "branch" path
             subprocess.run([
-                "git", "worktree", "add", str(worktree_path), 
-                "-b", branch_name, base_branch
+                "git", "worktree", "add", "-b", branch_name, str(worktree_path)
             ], check=True, capture_output=True, encoding='utf-8', errors='replace')
             
             self.active_worktrees[name] = {
