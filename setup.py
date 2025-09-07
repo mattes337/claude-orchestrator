@@ -7,6 +7,13 @@ Installs the orchestrator as a global command: claude-orchestrator
 from setuptools import setup, find_packages
 import os
 
+# Get version from _version.py
+def get_version():
+    version_file = os.path.join(os.path.dirname(__file__), '_version.py')
+    with open(version_file) as f:
+        exec(f.read())
+    return locals()['__version__']
+
 # Read the README file
 def read_long_description():
     with open('README.md', 'r', encoding='utf-8') as fh:
@@ -23,7 +30,7 @@ def get_requirements():
 
 setup(
     name='claude-orchestrator',
-    version='1.0.0',
+    version=get_version(),
     author='Claude Orchestrator Team',
     description='Claude Code Milestone Orchestrator - A tool for managing and executing development milestones',
     long_description=read_long_description(),

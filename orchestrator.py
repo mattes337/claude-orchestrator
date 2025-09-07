@@ -21,6 +21,9 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import signal
 
+# Import version information
+from _version import __version__, get_version_string, get_detailed_version
+
 # Import shared types
 from types_shared import ValidationResult, CodeReviewResult, TaskResult
 
@@ -1307,7 +1310,12 @@ def main():
     # Setup Windows console for Unicode handling
     setup_windows_console()
     
-    parser = argparse.ArgumentParser(description="Claude Code Milestone Orchestrator")
+    parser = argparse.ArgumentParser(
+        description=f"Claude Code Milestone Orchestrator v{__version__}",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=get_detailed_version()
+    )
+    parser.add_argument("--version", action="version", version=get_version_string())
     parser.add_argument("--config", default="orchestrator.config.json",
                       help="Configuration file path")
     parser.add_argument("--resume", action="store_true",
@@ -1328,6 +1336,10 @@ def main():
     args = parser.parse_args()
     
     try:
+        # Show version on startup
+        print(get_version_string())
+        print()
+        
         # Initialize orchestrator
         orchestrator = MilestoneOrchestrator(args.config)
         orchestrator.verbose = args.verbose
