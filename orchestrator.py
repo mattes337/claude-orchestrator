@@ -21,6 +21,9 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import signal
 
+# Import shared types
+from types_shared import ValidationResult, CodeReviewResult, TaskResult
+
 # Import advanced modules
 from advanced import (
     RateLimitManager,
@@ -28,8 +31,7 @@ from advanced import (
     WorktreeManager,
     ClaudeCodeWrapper,
     MilestoneValidator,
-    CodeReviewManager,
-    CodeReviewResult
+    CodeReviewManager
 )
 from milestone_preprocessor import MilestonePreprocessor
 
@@ -173,18 +175,7 @@ class OrchestratorState:
             os.remove(self.state_file)
         logging.info("Orchestrator state has been reset")
 
-class TaskResult:
-    """Represents the result of a task execution"""
-    
-    def __init__(self, task_id: str, success: bool, output: str = "", 
-                 error: str = "", duration: float = 0.0, retry_count: int = 0):
-        self.task_id = task_id
-        self.success = success
-        self.output = output
-        self.error = error
-        self.duration = duration
-        self.retry_count = retry_count
-        self.timestamp = datetime.now().isoformat()
+# TaskResult is now imported from types_shared
 
 class MilestoneOrchestrator:
     """Main orchestrator class for milestone execution"""

@@ -2,14 +2,14 @@
   "milestones_dir": "milestones",
   "tasks_file": "TASKS.md",
   "execution": {
-    "max_parallel_tasks": 4,
-    "task_timeout": 1800,
-    "max_retries": 3,
+    "max_parallel_tasks": 1,
+    "task_timeout": 1200,
+    "max_retries": 2,
     "retry_delay": 30
   },
   "rate_limit": {
-    "requests_per_minute": 50,
-    "burst_limit": 10,
+    "requests_per_minute": 20,
+    "burst_limit": 3,
     "backoff_multiplier": 2
   },
   "git": {
@@ -35,9 +35,9 @@
     "backup_count": 5
   },
   "system": {
-    "cpu_threshold": 90.0,
-    "memory_threshold": 85.0,
-    "disk_threshold": 90.0,
+    "cpu_threshold": 80.0,
+    "memory_threshold": 80.0,
+    "disk_threshold": 80.0,
     "check_interval": 10
   },
   "validation": {

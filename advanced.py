@@ -22,35 +22,8 @@ import shutil
 import re
 import uuid
 
-@dataclass
-class ValidationResult:
-    """Result of milestone or task validation"""
-    valid: bool
-    errors: List[str]
-    warnings: List[str]
-    score: float = 0.0
-    
-    def add_error(self, error: str):
-        self.errors.append(error)
-        self.valid = False
-    
-    def add_warning(self, warning: str):
-        self.warnings.append(warning)
-
-@dataclass
-class CodeReviewResult:
-    """Result of code review process"""
-    success: bool
-    quality_score: float
-    todos_found: List[str]
-    quality_gates_failed: List[str]
-    recommendations: List[str]
-    report_file: str
-    iterations_completed: int = 0
-    
-    @property
-    def has_quality_issues(self) -> bool:
-        return len(self.todos_found) > 0 or len(self.quality_gates_failed) > 0 or self.quality_score < 0.8
+# Import shared types to avoid circular imports
+from types_shared import ValidationResult, CodeReviewResult, TaskResult
 
 class RateLimitManager:
     """Manages API rate limiting with intelligent backoff"""
@@ -416,7 +389,7 @@ class ClaudeCodeWrapper:
     def execute_task(self, task: Dict[str, Any], worktree_path: Optional[str] = None, 
                     timeout: int = 300) -> 'TaskResult':
         """Execute a task using Claude Code"""
-        from orchestrator import TaskResult  # Avoid circular import
+        # TaskResult is now imported from types_shared
         
         if not self.is_available:
             error_msg = f"Claude Code CLI not available at path: {self.claude_path}"
@@ -725,7 +698,7 @@ class MilestoneValidator:
     def validate_milestone(self, milestone: Dict[str, Any], 
                           task_results: List['TaskResult']) -> ValidationResult:
         """Validate milestone completion against results"""
-        from orchestrator import TaskResult  # Avoid circular import
+        # TaskResult is now imported from types_shared
         
         result = ValidationResult(True, [], [])
         
