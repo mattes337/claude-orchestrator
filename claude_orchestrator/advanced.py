@@ -400,7 +400,7 @@ class ClaudeCodeWrapper:
     def execute_task(self, task: Dict[str, Any], worktree_path: Optional[str] = None, 
                     timeout: int = 300) -> 'TaskResult':
         """Execute a task using Claude Code"""
-        from orchestrator import TaskResult  # Avoid circular import
+        from .orchestrator import TaskResult  # Avoid circular import
         
         if not self.is_available:
             error_msg = f"Claude Code CLI not available at path: {self.claude_path}"
@@ -686,7 +686,7 @@ class MilestoneValidator:
     def validate_milestone(self, milestone: Dict[str, Any], 
                           task_results: List['TaskResult']) -> ValidationResult:
         """Validate milestone completion against results"""
-        from orchestrator import TaskResult  # Avoid circular import
+        from .orchestrator import TaskResult  # Avoid circular import
         
         result = ValidationResult(True, [], [])
         
