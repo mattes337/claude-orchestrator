@@ -132,6 +132,9 @@ class MilestoneOrchestrator:
         self.max_workers = self.config.get("execution", {}).get("max_parallel_tasks", 4)
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
         
+        # Output control
+        self.verbose = False
+        
         logging.info("Orchestrator initialized successfully")
     
     def signal_handler(self, signum, frame):
@@ -367,6 +370,15 @@ class MilestoneOrchestrator:
         logging.info(f"Starting execution of {len(milestones)} milestones across {len(stages)} stages")
         self.state.add_log_entry(f"Starting execution of {len(milestones)} milestones")
         
+        # Show execution overview
+        print(f"\n=== Starting Milestone Execution ===")
+        print(f"   Milestones: {len(milestones)}")
+        print(f"   Stages: {len(stages)}")
+        if self.verbose:
+            for stage_num, stage_milestones in stages.items():
+                print(f"   Stage {stage_num}: {len(stage_milestones)} milestones")
+        print()
+        
         try:
             for stage_num in sorted(stages.keys()):
                 if self.shutdown_requested:
@@ -378,10 +390,14 @@ class MilestoneOrchestrator:
                     logging.info(f"Skipping completed stage {stage_num}")
                     continue
                 
+                print(f">> Executing Stage {stage_num} ({len(stages[stage_num])} milestones)")
                 success = self.execute_stage(stage_num, stages[stage_num])
                 if not success:
+                    print(f"[FAILED] Stage {stage_num} failed, stopping execution")
                     logging.error(f"Stage {stage_num} failed, stopping execution")
                     return False
+                else:
+                    print(f"[SUCCESS] Stage {stage_num} completed successfully")
                 
                 self.state.state["current_stage"] = stage_num + 1
                 self.state.save_state()
@@ -389,6 +405,17 @@ class MilestoneOrchestrator:
             # Final validation and reporting
             self.generate_final_report()
             logging.info("All stages completed successfully")
+            
+            # Show completion summary
+            print(f"\n=== Execution Complete! ===")
+            total_time = (datetime.now() - datetime.fromisoformat(self.state.state["total_start_time"])).total_seconds()
+            print(f"   Total time: {total_time:.1f}s")
+            if self.verbose:
+                completed_tasks = len(self.state.state["completed_tasks"])
+                failed_tasks = len(self.state.state["failed_tasks"])
+                print(f"   Tasks completed: {completed_tasks}")
+                print(f"   Tasks failed: {failed_tasks}")
+            
             return True
             
         except Exception as e:
@@ -433,9 +460,16 @@ class MilestoneOrchestrator:
                             stage_results.append(result)
                             
                             if result["success"]:
+                                print(f"    [DONE] Milestone completed: {milestone['title']}")
                                 logging.info(f"Milestone {milestone['id']} completed successfully")
+                                if self.verbose:
+                                    duration = result.get('duration', 0)
+                                    task_count = len(result.get('task_results', []))
+                                    print(f"           Duration: {duration:.1f}s, Tasks: {task_count}")
                             else:
-                                logging.error(f"Milestone {milestone['id']} failed: {result.get('error', 'Unknown error')}")
+                                error_msg = result.get('error', 'Unknown error')
+                                print(f"    [FAIL] Milestone failed: {milestone['title']} - {error_msg}")
+                                logging.error(f"Milestone {milestone['id']} failed: {error_msg}")
                         
                         except Exception as e:
                             logging.error(f"Milestone {milestone['id']} execution exception: {e}")
@@ -489,6 +523,11 @@ class MilestoneOrchestrator:
         """Execute a single milestone"""
         milestone_id = milestone["id"]
         logging.info(f"Starting milestone {milestone_id}")
+        
+        if self.verbose:
+            print(f"  -> Starting milestone: {milestone['title']} ({milestone_id})")
+        else:
+            print(f"  -> {milestone['title']}")
         
         milestone_start_time = time.time()
         results = []
@@ -608,11 +647,18 @@ class MilestoneOrchestrator:
                     time.sleep(30)
                 
                 # Execute task
+                if self.verbose:
+                    print(f"      * Executing task: {task.get('title', task_id)}")
+                
                 result = self.claude_wrapper.execute_task(
                     task, 
                     worktree_path=self.state.state["worktree_paths"].get(milestone_id),
                     timeout=self.config["execution"]["task_timeout"]
                 )
+                
+                if self.verbose:
+                    status = "[OK]" if result.success else "[ERR]"
+                    print(f"      {status} Task {task_id}: {'Completed' if result.success else result.error}")
                 
                 if result.success:
                     self.state.state["completed_tasks"].add(task_id)
@@ -770,12 +816,15 @@ def main():
                       help="Execute specific milestone only")
     parser.add_argument("--dry-run", action="store_true",
                       help="Show execution plan without running")
+    parser.add_argument("--verbose", action="store_true",
+                      help="Enable verbose output showing detailed progress")
     
     args = parser.parse_args()
     
     try:
         # Initialize orchestrator
         orchestrator = MilestoneOrchestrator(args.config)
+        orchestrator.verbose = args.verbose
         
         # Discover milestones
         milestones = orchestrator.discover_milestones()

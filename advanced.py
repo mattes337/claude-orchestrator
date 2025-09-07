@@ -349,22 +349,50 @@ class ClaudeCodeWrapper:
     """Wrapper for Claude Code CLI interactions"""
     
     def __init__(self, claude_path: str = "claude"):
-        self.claude_path = claude_path
+        # Try to find the full path to claude command
+        import shutil
+        if claude_path == "claude":
+            # Try to find claude in PATH
+            found_path = shutil.which("claude")
+            if found_path:
+                self.claude_path = found_path
+            else:
+                # Try common Windows locations
+                possible_paths = [
+                    "C:/Users/MatthiasHelling/AppData/Roaming/npm/claude.cmd",
+                    "C:/Users/MatthiasHelling/AppData/Roaming/npm/claude",
+                    "claude.cmd",
+                    "claude"
+                ]
+                self.claude_path = claude_path
+                for path in possible_paths:
+                    if shutil.which(path):
+                        self.claude_path = path
+                        break
+        else:
+            self.claude_path = claude_path
+            
         self.session_id = None
         self.default_timeout = 300
         
         # Verify Claude Code is available
         self.is_available = self._check_claude_availability()
         if not self.is_available:
-            logging.warning("Claude Code CLI not available")
+            logging.warning(f"Claude Code CLI not available at path: {self.claude_path}")
     
     def _check_claude_availability(self) -> bool:
         """Check if Claude Code CLI is available"""
         try:
+            # On Windows, we might need shell=True
+            import platform
+            use_shell = platform.system() == "Windows"
+            
             result = subprocess.run([self.claude_path, "--version"], 
-                                  capture_output=True, text=True, timeout=10)
+                                  capture_output=True, text=True, timeout=10,
+                                  shell=use_shell)
             return result.returncode == 0
-        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+            logging.debug(f"Claude availability check failed: {e}")
             return False
     
     def execute_task(self, task: Dict[str, Any], worktree_path: Optional[str] = None, 
@@ -451,14 +479,22 @@ Please implement this task following best practices. Ensure all code is properly
                 prompt_file = f.name
             
             try:
-                # Execute claude command
-                cmd = [self.claude_path, "chat", "--file", prompt_file]
+                # Execute claude command with correct syntax
+                # Read the prompt from file and pass it directly
+                with open(prompt_file, 'r', encoding='utf-8') as f:
+                    prompt_content = f.read()
+                
+                cmd = [self.claude_path, "--print", prompt_content]
+                import platform
+                use_shell = platform.system() == "Windows"
+                
                 result = subprocess.run(
                     cmd,
                     capture_output=True,
                     text=True,
                     timeout=timeout,
-                    check=False
+                    check=False,
+                    shell=use_shell
                 )
                 
                 return {
