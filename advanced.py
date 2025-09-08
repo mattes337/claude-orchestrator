@@ -246,7 +246,8 @@ class WorktreeManager:
             result = subprocess.run(
                 ["git", "rev-parse", "--git-dir"],
                 capture_output=True, text=True, check=True,
-                encoding='utf-8', errors='replace'
+                encoding='utf-8', errors='replace',
+                cwd=os.getcwd()
             )
             return True
         except subprocess.CalledProcessError:
@@ -268,16 +269,31 @@ class WorktreeManager:
         try:
             # Create new branch
             branch_name = f"milestone/{name}"
+            
+            # Delete existing branch if it exists
+            try:
+                subprocess.run(
+                    ["git", "branch", "-D", branch_name],
+                    capture_output=True, encoding='utf-8', errors='replace',
+                    cwd=os.getcwd()
+                )
+                logging.info(f"Deleted existing branch: {branch_name}")
+            except subprocess.CalledProcessError:
+                # Branch doesn't exist, which is fine
+                pass
+            
             subprocess.run(
                 ["git", "checkout", base_branch],
                 check=True, capture_output=True,
-                encoding='utf-8', errors='replace'
+                encoding='utf-8', errors='replace',
+                cwd=os.getcwd()
             )
             
             # Create worktree using correct syntax: git worktree add -b "branch" path
             subprocess.run([
                 "git", "worktree", "add", "-b", branch_name, str(worktree_path)
-            ], check=True, capture_output=True, encoding='utf-8', errors='replace')
+            ], check=True, capture_output=True, encoding='utf-8', errors='replace',
+               cwd=os.getcwd())
             
             self.active_worktrees[name] = {
                 "path": str(worktree_path),
@@ -303,7 +319,8 @@ class WorktreeManager:
             # Remove worktree
             subprocess.run([
                 "git", "worktree", "remove", str(path), "--force"
-            ], check=True, capture_output=True, encoding='utf-8', errors='replace')
+            ], check=True, capture_output=True, encoding='utf-8', errors='replace',
+               cwd=os.getcwd())
             
             # Remove from active tracking
             for name, info in list(self.active_worktrees.items()):
