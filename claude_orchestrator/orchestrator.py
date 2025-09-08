@@ -22,13 +22,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import signal
 
 # Import version information
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from _version import __version__, get_version_string, get_detailed_version
+from ._version import __version__, get_version_string, get_detailed_version
 
 # Import shared types
-from types_shared import ValidationResult, CodeReviewResult, TaskResult
+from .types_shared import ValidationResult, CodeReviewResult, TaskResult
 
 # Import advanced modules
 from .advanced import (
