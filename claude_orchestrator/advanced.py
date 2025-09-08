@@ -466,6 +466,36 @@ class ClaudeCodeWrapper:
     
     def _prepare_task_prompt(self, task: Dict[str, Any]) -> str:
         """Prepare Claude Code prompt for task"""
+        # Check if this is a Claude-driven task with raw milestone content
+        if task.get('claude_driven') and 'milestone_content' in task:
+            milestone_content = task['milestone_content']
+            task_title = task.get('title', 'Milestone Implementation')
+            
+            prompt = f"""Please implement the following milestone specification:
+
+{task_title}
+
+=== MILESTONE SPECIFICATION ===
+{milestone_content}
+=== END MILESTONE SPECIFICATION ===
+
+INSTRUCTIONS:
+1. Read and understand the complete milestone specification above
+2. Analyze the current project structure to understand how to implement this milestone
+3. Create all necessary files, code, configuration, tests, and documentation to fulfill this milestone
+4. You MUST create actual files using Write, Edit, or MultiEdit tools - do not just provide examples
+5. Follow the acceptance criteria exactly as specified in the milestone
+6. Use appropriate project structure and naming conventions
+7. Implement everything needed to complete this milestone successfully
+
+The milestone content above contains all the requirements, acceptance criteria, and context you need. 
+Implement it completely using the available tools.
+
+Begin implementation now."""
+            
+            return prompt
+        
+        # Original format for backward compatibility
         task_title = task['title']
         requirements = task.get('requirements', 'No specific requirements provided')
         acceptance_criteria = task.get('acceptance_criteria', 'No specific criteria provided')
@@ -496,39 +526,16 @@ SPECIFIC ACTIONS REQUIRED:
 - If this involves tests, create test files in the appropriate test directory
 - If this involves documentation, create or update relevant documentation files
 
-MCP SERVERS AVAILABLE:
-Use the following MCP servers when appropriate for enhanced capabilities:
-
-🔍 CONTEXT7 MCP - For documentation and research:
-- Use when you need to consult documentation or research best practices
-- Helpful for understanding project context and standards
-- Use for gathering information about frameworks, libraries, and patterns
-
-🎭 PLAYWRIGHT MCP - For browser testing and E2E testing:
-- Use when implementing testing functionality
-- Essential for UI testing, browser automation, and end-to-end tests
-- Use for creating test scenarios and validating user interactions
-
-🎨 ACETERNITY MCP - For UI design and components:
-- Use when creating UI components or styling
-- Provides modern design patterns and component libraries
-- Use for implementing responsive layouts and beautiful interfaces
-
 IMPLEMENTATION STEPS:
 1. Analyze the current project structure using available tools
-2. Determine which MCP servers would be most helpful for this task
-3. Use relevant MCP servers for research, testing, or design guidance
-4. Determine the exact file paths needed for implementation
-5. Create or modify files using Write/Edit/MultiEdit tools
-6. Ensure all created files follow the project's conventions and structure
-7. If implementing UI components, leverage Aceternity MCP for modern designs
-8. If implementing testing, use Playwright MCP for comprehensive test coverage
-9. Use Context7 MCP for documentation consultation when needed
-10. Verify that your implementation meets all requirements and acceptance criteria
+2. Determine the exact file paths needed for implementation
+3. Create or modify files using Write/Edit/MultiEdit tools
+4. Ensure all created files follow the project's conventions and structure
+5. Verify that your implementation meets all requirements and acceptance criteria
 
 IMPORTANT: This task will ONLY be marked as successful if you actually create or modify files. Simply acknowledging the task or providing code snippets without creating files will result in task failure.
 
-Begin implementation now using the appropriate file creation tools and MCP servers."""
+Begin implementation now using the appropriate file creation tools."""
         
         return prompt
     

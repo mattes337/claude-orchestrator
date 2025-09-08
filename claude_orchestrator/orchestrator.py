@@ -403,87 +403,58 @@ class MilestoneOrchestrator:
         return milestones
     
     def parse_milestone_file(self, filepath: Path) -> Optional[Dict]:
-        """Parse a milestone file and extract tasks"""
+        """Parse a milestone file and create a single task for Claude Code to handle"""
         try:
-            # Preprocess the milestone to normalize its format
-            logging.info(f"Preprocessing milestone file: {filepath}")
-            normalized_content = self.preprocessor.preprocess_milestone(filepath)
-            
-            # Extract milestone metadata from normalized content
+            # Read the raw milestone content
+            original_content = filepath.read_text(encoding='utf-8')
             milestone_id = filepath.stem
-            title_match = re.search(r'^#\s+(.+)$', normalized_content, re.MULTILINE)
+            
+            # Extract basic metadata from the raw content
+            title_match = re.search(r'^#\s+(.+)$', original_content, re.MULTILINE)
             title = title_match.group(1) if title_match else milestone_id
             
-            # Extract description (everything before first ##)
-            desc_match = re.search(r'^#\s+.+?\n\n(.+?)(?=\n##|\Z)', normalized_content, re.MULTILINE | re.DOTALL)
+            # Extract description (everything after title until first ##)
+            desc_match = re.search(r'^#\s+.+?\n\n(.+?)(?=\n##|\Z)', original_content, re.MULTILINE | re.DOTALL)
             description = desc_match.group(1).strip() if desc_match else ""
             
-            # Extract tasks using the preprocessor's intelligent extraction
-            original_content = filepath.read_text(encoding='utf-8')
-            tasks = self.preprocessor.extract_tasks(original_content, milestone_id)
-            
-            # If no tasks found, try to run full preprocessing to create proper format
-            if not tasks:
-                logging.warning(f"No tasks found for {milestone_id}, checking if preprocessing is needed")
-                
-                # Check if file already has been processed marker
-                if "<!-- PROCESSED BY ORCHESTRATOR -->" not in original_content:
-                    logging.info(f"Running full preprocessing for {milestone_id} to create task format")
-                    try:
-                        # Run the preprocessor to convert to proper format
-                        processed_content = self.preprocessor.preprocess_milestone(filepath)
-                        
-                        # Add processed marker to prevent loops
-                        processed_content += "\n\n<!-- PROCESSED BY ORCHESTRATOR -->\n"
-                        
-                        # Write the processed content back to file
-                        filepath.write_text(processed_content, encoding='utf-8')
-                        logging.info(f"✅ Preprocessed {milestone_id} and updated file")
-                        
-                        # Try extracting tasks again from processed content
-                        tasks = self.preprocessor.extract_tasks(processed_content, milestone_id)
-                        logging.info(f"📝 After preprocessing: {len(tasks)} tasks found for {milestone_id}")
-                        
-                    except Exception as preprocess_error:
-                        logging.error(f"Failed to preprocess {milestone_id}: {preprocess_error}")
-                else:
-                    logging.info(f"File {milestone_id} already processed, but still no tasks found")
-            
             # Extract dependencies
-            deps_match = re.search(r'## Dependencies\n(.+?)(?=\n##|\Z)', normalized_content, re.MULTILINE | re.DOTALL)
+            deps_match = re.search(r'## Dependencies\n(.+?)(?=\n##|\Z)', original_content, re.MULTILINE | re.DOTALL)
             dependencies = []
             if deps_match:
                 deps_text = deps_match.group(1)
-                # Handle "None specified" case
                 if "None specified" not in deps_text:
                     dependencies = re.findall(r'- (.+)', deps_text)
             
-            # Extract stage information
-            stage_match = re.search(r'Stage:\s*(\d+)', normalized_content, re.IGNORECASE)
-            stage = int(stage_match.group(1)) if stage_match else 1
-            
-            # Additional stage detection methods for better compatibility
-            if stage == 1 and milestone_id:
-                # Try to extract stage from milestone ID patterns like "4a", "4b", "4c"
+            # Extract stage information from milestone ID (e.g., "1a" -> stage 1)
+            stage = 1
+            if milestone_id:
                 id_stage_match = re.search(r'^(\d+)[a-z]?', milestone_id)
                 if id_stage_match:
-                    potential_stage = int(id_stage_match.group(1))
-                    logging.info(f"🔍 Stage detection for {milestone_id}: Found stage {potential_stage} from milestone ID pattern")
-                    stage = potential_stage
+                    stage = int(id_stage_match.group(1))
+                    logging.info(f"🔍 Detected stage {stage} from milestone ID: {milestone_id}")
                 else:
-                    logging.info(f"🔍 Stage detection for {milestone_id}: No stage found in ID, using default stage 1")
-            else:
-                logging.info(f"🔍 Stage detection for {milestone_id}: Explicit stage {stage} found in content")
+                    logging.info(f"🔍 No stage found in ID {milestone_id}, using default stage 1")
             
-            # Log preprocessing success
-            logging.info(f"✅ Successfully preprocessed {milestone_id}: {len(tasks)} tasks extracted, assigned to stage {stage}")
+            # Create a single task that passes the entire milestone to Claude Code
+            task = {
+                "id": f"{milestone_id}_claude_execution",
+                "title": f"Implement {title}",
+                "description": f"Let Claude Code implement the entire milestone: {title}",
+                "priority": "high",
+                "estimated_time": 60,
+                "milestone_content": original_content,
+                "milestone_filepath": str(filepath),
+                "claude_driven": True
+            }
+            
+            logging.info(f"✅ Created Claude-driven task for {milestone_id}: {title}")
             
             return {
                 "id": milestone_id,
                 "title": title,
                 "description": description,
                 "stage": stage,
-                "tasks": tasks,
+                "tasks": [task],  # Single task containing the whole milestone
                 "dependencies": dependencies,
                 "filepath": str(filepath)
             }
@@ -1012,16 +983,40 @@ class MilestoneOrchestrator:
             }
     
     def conduct_milestone_code_review(self, milestone_id: str, milestone: Dict, stage_num: int) -> CodeReviewResult:
-        """Conduct iterative code review for a milestone"""
+        """Conduct milestone validation and iterative code review"""
         logging.info(f"Conducting code review for milestone {milestone_id}")
         
         if self.verbose:
-            print(f"      → Running code review for {milestone_id}...")
+            print(f"      → Running milestone validation and code review for {milestone_id}...")
         
         worktree_path = self.state.state.get("worktree_paths", {}).get(milestone_id)
         
         try:
-            # Conduct initial code review with iterative improvement
+            # Step 1: Pre-review milestone validation with Claude Code
+            milestone_validation = self._conduct_pre_review_validation(milestone_id, milestone, worktree_path)
+            
+            if not milestone_validation.success:
+                if self.verbose:
+                    print(f"      [MILESTONE_VALIDATION] Failed: {milestone_validation.error}")
+                
+                # Execute gap fixing if validation fails
+                gap_fix_result = self._execute_stage_milestone_gap_fix(
+                    milestone_id, 
+                    milestone_validation.error, 
+                    worktree_path
+                )
+                
+                if not gap_fix_result:
+                    return CodeReviewResult(
+                        success=False,
+                        quality_score=0.0,
+                        todos_found=[],
+                        quality_gates_failed=[f"Milestone validation failed: {milestone_validation.error}"],
+                        recommendations=["Review and complete milestone requirements"],
+                        report_file=f"milestone_validation_{milestone_id}_failed.md"
+                    )
+            
+            # Step 2: Conduct regular code review
             review_result = self.code_reviewer.conduct_code_review(
                 milestone_id, 
                 worktree_path=worktree_path, 
@@ -1195,9 +1190,36 @@ class MilestoneOrchestrator:
                     print(f"      {status} Task {task_id}: {'Completed' if result.success else result.error}")
                 
                 if result.success:
-                    self.state.state["completed_tasks"].add(task_id)
-                    logging.info(f"Task {task_id} completed successfully (attempt {attempt + 1})")
-                    return result
+                    # For Claude-driven tasks, validate implementation against milestone
+                    if task.get('claude_driven') and 'milestone_content' in task:
+                        validation_result = self._validate_milestone_implementation(
+                            task, 
+                            self.state.state["worktree_paths"].get(milestone_id),
+                            milestone_id
+                        )
+                        
+                        if not validation_result.success:
+                            logging.warning(f"Milestone validation failed for {task_id}: {validation_result.error}")
+                            if self.verbose:
+                                print(f"      [VALIDATION] Milestone implementation incomplete, retrying...")
+                            
+                            # Re-execute with gap information
+                            gap_result = self._execute_milestone_gap_fix(
+                                task, 
+                                validation_result.error,
+                                self.state.state["worktree_paths"].get(milestone_id)
+                            )
+                            
+                            if gap_result.success:
+                                result = gap_result  # Use the gap-fixed result
+                            else:
+                                logging.error(f"Gap fix failed for {task_id}: {gap_result.error}")
+                                result = TaskResult(task_id, False, error=f"Milestone validation failed: {validation_result.error}")
+                    
+                    if result.success:  # Check again after potential gap fixing
+                        self.state.state["completed_tasks"].add(task_id)
+                        logging.info(f"Task {task_id} completed successfully (attempt {attempt + 1})")
+                        return result
                 else:
                     error_details = f"Task {task_id} failed (attempt {attempt + 1}): {result.error}"
                     logging.warning(error_details)
@@ -1222,6 +1244,237 @@ class MilestoneOrchestrator:
         self.state.state["failed_tasks"].add(task_id)
         return TaskResult(task_id, False, error=f"Failed after {max_retries + 1} attempts")
     
+    def _validate_milestone_implementation(self, task: Dict, worktree_path: str, milestone_id: str) -> 'ValidationResult':
+        """Validate that milestone implementation matches requirements"""
+        try:
+            milestone_content = task.get('milestone_content', '')
+            
+            # Create validation prompt
+            validation_prompt = f"""Please validate if the current implementation matches the milestone requirements.
+
+=== MILESTONE SPECIFICATION ===
+{milestone_content}
+=== END MILESTONE SPECIFICATION ===
+
+VALIDATION INSTRUCTIONS:
+1. Analyze the current project files and structure
+2. Compare what has been implemented against the milestone specification above
+3. Check if all acceptance criteria have been met
+4. Identify any gaps or missing implementations
+
+RESPONSE FORMAT:
+If implementation is complete: "VALIDATION: COMPLETE - All requirements satisfied"
+If implementation is incomplete: "VALIDATION: INCOMPLETE - [specific gaps found]"
+
+Begin validation now."""
+
+            # Execute validation in the worktree
+            original_cwd = os.getcwd()
+            if worktree_path and os.path.exists(worktree_path):
+                os.chdir(worktree_path)
+            
+            try:
+                validation_result = self.claude_wrapper._execute_claude_command(validation_prompt, 60)
+                output = validation_result.get("output", "").strip()
+                
+                if "VALIDATION: COMPLETE" in output:
+                    return ValidationResult(True, "Implementation complete")
+                else:
+                    # Extract gap information
+                    gap_info = output
+                    if "VALIDATION: INCOMPLETE" in output:
+                        gap_info = output.split("VALIDATION: INCOMPLETE - ", 1)[1] if " - " in output else output
+                    
+                    return ValidationResult(False, gap_info)
+                    
+            finally:
+                if worktree_path:
+                    os.chdir(original_cwd)
+                    
+        except Exception as e:
+            logging.error(f"Milestone validation error: {e}")
+            return ValidationResult(False, f"Validation error: {e}")
+    
+    def _execute_milestone_gap_fix(self, task: Dict, gap_info: str, worktree_path: str) -> 'TaskResult':
+        """Execute milestone implementation to fix identified gaps"""
+        try:
+            milestone_content = task.get('milestone_content', '')
+            
+            # Create gap-fixing prompt
+            gap_prompt = f"""The previous implementation was incomplete. Please fix the identified gaps.
+
+=== MILESTONE SPECIFICATION ===
+{milestone_content}
+=== END MILESTONE SPECIFICATION ===
+
+=== IDENTIFIED GAPS ===
+{gap_info}
+=== END GAPS ===
+
+INSTRUCTIONS:
+1. Review the current implementation
+2. Address all identified gaps above
+3. Complete any missing parts of the milestone specification
+4. Ensure all acceptance criteria are now satisfied
+5. Create/modify files as needed using Write, Edit, or MultiEdit tools
+
+Begin gap fixing now."""
+
+            # Execute gap fixing
+            original_cwd = os.getcwd()
+            if worktree_path and os.path.exists(worktree_path):
+                os.chdir(worktree_path)
+                
+            try:
+                result = self.claude_wrapper._execute_claude_command(gap_prompt, 300)
+                success = self.claude_wrapper._analyze_result(result, task)
+                
+                if success:
+                    return TaskResult(task["id"], True, output=result.get("output", ""), duration=0)
+                else:
+                    return TaskResult(task["id"], False, error=result.get("error", "Gap fix failed"))
+                    
+            finally:
+                if worktree_path:
+                    os.chdir(original_cwd)
+                    
+        except Exception as e:
+            logging.error(f"Gap fixing error: {e}")
+            return TaskResult(task["id"], False, error=f"Gap fixing error: {e}")
+
+    def _conduct_pre_review_validation(self, milestone_id: str, milestone: Dict, worktree_path: str) -> 'ValidationResult':
+        """Conduct pre-review validation comparing implementation to milestone specification"""
+        try:
+            # Get milestone filepath to read raw content
+            milestone_filepath = milestone.get('filepath', '')
+            if not milestone_filepath or not os.path.exists(milestone_filepath):
+                return ValidationResult(False, "Milestone file not found")
+            
+            # Read milestone content
+            milestone_content = Path(milestone_filepath).read_text(encoding='utf-8')
+            
+            # Create comprehensive validation prompt
+            validation_prompt = f"""Please conduct a comprehensive validation of the current implementation against the milestone specification.
+
+=== MILESTONE SPECIFICATION ===
+{milestone_content}
+=== END MILESTONE SPECIFICATION ===
+
+VALIDATION INSTRUCTIONS:
+1. Analyze all files in the current project directory
+2. Compare the current implementation against every requirement in the milestone specification
+3. Check if all acceptance criteria have been satisfied
+4. Verify that the implementation follows best practices and project conventions
+5. Identify any missing functionality, incomplete implementations, or gaps
+
+RESPONSE FORMAT:
+If validation passes: "MILESTONE_VALIDATION: COMPLETE - All requirements fully implemented"
+If validation fails: "MILESTONE_VALIDATION: INCOMPLETE - [detailed description of gaps and missing implementations]"
+
+Begin comprehensive validation now."""
+
+            # Execute validation in the worktree
+            original_cwd = os.getcwd()
+            if worktree_path and os.path.exists(worktree_path):
+                os.chdir(worktree_path)
+            
+            try:
+                validation_result = self.claude_wrapper._execute_claude_command(validation_prompt, 120)
+                output = validation_result.get("output", "").strip()
+                
+                if "MILESTONE_VALIDATION: COMPLETE" in output:
+                    return ValidationResult(True, "Milestone validation passed")
+                else:
+                    # Extract gap information
+                    gap_info = output
+                    if "MILESTONE_VALIDATION: INCOMPLETE" in output:
+                        gap_info = output.split("MILESTONE_VALIDATION: INCOMPLETE - ", 1)[1] if " - " in output else output
+                    
+                    return ValidationResult(False, gap_info)
+                    
+            finally:
+                if worktree_path:
+                    os.chdir(original_cwd)
+                    
+        except Exception as e:
+            logging.error(f"Pre-review validation error: {e}")
+            return ValidationResult(False, f"Pre-review validation error: {e}")
+    
+    def _execute_stage_milestone_gap_fix(self, milestone_id: str, gap_info: str, worktree_path: str) -> bool:
+        """Execute gap fixing for milestone during code review stage"""
+        try:
+            # Get all completed milestones in the same stage to provide context
+            completed_milestones = []
+            current_stage = self._extract_stage_from_milestone_id(milestone_id)
+            
+            for completed_task in self.state.state.get("completed_tasks", []):
+                if completed_task.endswith("_claude_execution"):
+                    completed_milestone_id = completed_task.replace("_claude_execution", "")
+                    task_stage = self._extract_stage_from_milestone_id(completed_milestone_id)
+                    if task_stage == current_stage:
+                        # Get milestone filepath and content
+                        milestone_filepath = self._get_milestone_filepath(completed_milestone_id)
+                        if milestone_filepath:
+                            milestone_content = Path(milestone_filepath).read_text(encoding='utf-8')
+                            completed_milestones.append({
+                                'id': completed_milestone_id,
+                                'content': milestone_content
+                            })
+            
+            # Create gap-fixing prompt with all stage milestone context
+            all_milestones_content = ""
+            for ms in completed_milestones:
+                all_milestones_content += f"\n=== MILESTONE {ms['id'].upper()} ===\n{ms['content']}\n=== END {ms['id'].upper()} ===\n"
+            
+            gap_prompt = f"""Implementation gaps have been identified. Please fix all identified issues.
+
+=== ALL STAGE MILESTONE SPECIFICATIONS ===
+{all_milestones_content}
+=== END ALL SPECIFICATIONS ===
+
+=== IDENTIFIED GAPS FOR {milestone_id.upper()} ===
+{gap_info}
+=== END GAPS ===
+
+INSTRUCTIONS:
+1. Review the current project implementation
+2. Consider all milestone specifications in this stage for context
+3. Address all identified gaps for milestone {milestone_id}
+4. Ensure the implementation meets all requirements across all milestones
+5. Create/modify files as needed using Write, Edit, or MultiEdit tools
+6. Maintain consistency with other implemented milestones
+
+Begin comprehensive gap fixing now."""
+
+            # Execute gap fixing
+            original_cwd = os.getcwd()
+            if worktree_path and os.path.exists(worktree_path):
+                os.chdir(worktree_path)
+                
+            try:
+                result = self.claude_wrapper._execute_claude_command(gap_prompt, 600)  # Longer timeout for comprehensive fix
+                return result.get("success", True)  # Assume success if no error
+                    
+            finally:
+                if worktree_path:
+                    os.chdir(original_cwd)
+                    
+        except Exception as e:
+            logging.error(f"Stage gap fixing error: {e}")
+            return False
+    
+    def _extract_stage_from_milestone_id(self, milestone_id: str) -> int:
+        """Extract stage number from milestone ID"""
+        import re
+        match = re.search(r'^(\d+)[a-z]', milestone_id)
+        return int(match.group(1)) if match else 1
+    
+    def _get_milestone_filepath(self, milestone_id: str) -> str:
+        """Get filepath for a milestone by ID"""
+        milestones_dir = Path(self.config["milestones_dir"])
+        milestone_file = milestones_dir / f"{milestone_id}.md"
+        return str(milestone_file) if milestone_file.exists() else ""
+
     def validate_milestone_dependencies(self, milestone: Dict) -> bool:
         """Validate that milestone dependencies are satisfied"""
         dependencies = milestone.get("dependencies", [])

@@ -631,6 +631,83 @@ Begin implementation now using the appropriate file creation tools and MCP serve
         
         # Otherwise, assume success if the command completed without error
         return len(output.strip()) > 0
+    
+    def execute_milestone_directly(self, milestone_content: str, milestone_id: str, timeout: int = 300) -> 'TaskResult':
+        """Execute a milestone directly by sending the full milestone content to Claude"""
+        from types_shared import TaskResult
+        
+        if not self.is_available:
+            error_msg = f"Claude Code CLI not available at path: {self.claude_path}"
+            logging.error(error_msg)
+            return TaskResult(
+                milestone_id, False, 
+                error=error_msg
+            )
+        
+        start_time = time.time()
+        
+        try:
+            # Prepare milestone prompt for Claude
+            prompt = f"""
+You are tasked with implementing the following milestone for the travelflow-backend project. 
+Please analyze the milestone requirements and implement all necessary changes.
+
+MILESTONE CONTENT:
+{milestone_content}
+
+Please:
+1. Read and understand the milestone requirements
+2. Implement all necessary code, configuration, and setup
+3. Follow the acceptance criteria specified in the milestone
+4. Create any required files and directories
+5. Ensure all dependencies are properly configured
+6. Test that the implementation works as expected
+
+Work within the current directory and implement the milestone completely.
+"""
+            
+            try:
+                # Execute Claude Code command with the milestone prompt
+                result = self._execute_claude_command(prompt, timeout)
+                
+                # Analyze result - for milestone execution, we assume success if Claude completed
+                success = result.returncode == 0 and len(result.stdout.strip()) > 0
+                
+                execution_time = time.time() - start_time
+                logging.info(f"Milestone {milestone_id} executed in {execution_time:.2f}s")
+                
+                if success:
+                    return TaskResult(
+                        milestone_id, True,
+                        output=result.stdout,
+                        execution_time=execution_time
+                    )
+                else:
+                    return TaskResult(
+                        milestone_id, False,
+                        error=result.stderr or "Unknown error during milestone execution",
+                        output=result.stdout,
+                        execution_time=execution_time
+                    )
+                    
+            except subprocess.TimeoutExpired:
+                error_msg = f"Milestone {milestone_id} execution timed out after {timeout} seconds"
+                logging.error(error_msg)
+                return TaskResult(
+                    milestone_id, False,
+                    error=error_msg,
+                    execution_time=timeout
+                )
+                
+        except Exception as e:
+            execution_time = time.time() - start_time
+            error_msg = f"Error executing milestone {milestone_id}: {str(e)}"
+            logging.error(error_msg)
+            return TaskResult(
+                milestone_id, False,
+                error=error_msg,
+                execution_time=execution_time
+            )
 
 class MilestoneValidator:
     """Validates milestone structure and completion"""

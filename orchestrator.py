@@ -402,54 +402,22 @@ class MilestoneOrchestrator:
         return milestones
     
     def parse_milestone_file(self, filepath: Path) -> Optional[Dict]:
-        """Parse a milestone file and extract tasks"""
+        """Parse a milestone file for Claude-driven execution"""
         try:
-            # Preprocess the milestone to normalize its format
-            logging.info(f"Preprocessing milestone file: {filepath}")
-            normalized_content = self.preprocessor.preprocess_milestone(filepath)
-            
-            # Extract milestone metadata from normalized content
+            # Read the milestone file directly without preprocessing
             milestone_id = filepath.stem
-            title_match = re.search(r'^#\s+(.+)$', normalized_content, re.MULTILINE)
+            content = filepath.read_text(encoding='utf-8')
+            
+            # Extract basic metadata
+            title_match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
             title = title_match.group(1) if title_match else milestone_id
             
             # Extract description (everything before first ##)
-            desc_match = re.search(r'^#\s+.+?\n\n(.+?)(?=\n##|\Z)', normalized_content, re.MULTILINE | re.DOTALL)
+            desc_match = re.search(r'^#\s+.+?\n\n(.+?)(?=\n##|\Z)', content, re.MULTILINE | re.DOTALL)
             description = desc_match.group(1).strip() if desc_match else ""
             
-            # Extract tasks using the preprocessor's intelligent extraction
-            original_content = filepath.read_text(encoding='utf-8')
-            tasks = self.preprocessor.extract_tasks(original_content, milestone_id)
-            
-            # If no tasks found, try to run full preprocessing to create proper format
-            if not tasks:
-                logging.warning(f"No tasks found for {milestone_id}, checking if preprocessing is needed")
-                
-                # Check if file already has been processed marker
-                if "<!-- PROCESSED BY ORCHESTRATOR -->" not in original_content:
-                    logging.info(f"Running full preprocessing for {milestone_id} to create task format")
-                    try:
-                        # Run the preprocessor to convert to proper format
-                        processed_content = self.preprocessor.preprocess_milestone(filepath)
-                        
-                        # Add processed marker to prevent loops
-                        processed_content += "\n\n<!-- PROCESSED BY ORCHESTRATOR -->\n"
-                        
-                        # Write the processed content back to file
-                        filepath.write_text(processed_content, encoding='utf-8')
-                        logging.info(f"✅ Preprocessed {milestone_id} and updated file")
-                        
-                        # Try extracting tasks again from processed content
-                        tasks = self.preprocessor.extract_tasks(processed_content, milestone_id)
-                        logging.info(f"📝 After preprocessing: {len(tasks)} tasks found for {milestone_id}")
-                        
-                    except Exception as preprocess_error:
-                        logging.error(f"Failed to preprocess {milestone_id}: {preprocess_error}")
-                else:
-                    logging.info(f"File {milestone_id} already processed, but still no tasks found")
-            
-            # Extract dependencies
-            deps_match = re.search(r'## Dependencies\n(.+?)(?=\n##|\Z)', normalized_content, re.MULTILINE | re.DOTALL)
+            # Extract dependencies from content
+            deps_match = re.search(r'## Dependencies\n(.+?)(?=\n##|\Z)', content, re.MULTILINE | re.DOTALL)
             dependencies = []
             if deps_match:
                 deps_text = deps_match.group(1)
@@ -457,32 +425,30 @@ class MilestoneOrchestrator:
                 if "None specified" not in deps_text:
                     dependencies = re.findall(r'- (.+)', deps_text)
             
-            # Extract stage information
-            stage_match = re.search(r'Stage:\s*(\d+)', normalized_content, re.IGNORECASE)
-            stage = int(stage_match.group(1)) if stage_match else 1
+            # Extract stage from milestone ID (e.g., "4a" -> stage 4)
+            stage = 1
+            id_stage_match = re.search(r'^(\d+)[a-z]?', milestone_id)
+            if id_stage_match:
+                stage = int(id_stage_match.group(1))
             
-            # Additional stage detection methods for better compatibility
-            if stage == 1 and milestone_id:
-                # Try to extract stage from milestone ID patterns like "4a", "4b", "4c"
-                id_stage_match = re.search(r'^(\d+)[a-z]?', milestone_id)
-                if id_stage_match:
-                    potential_stage = int(id_stage_match.group(1))
-                    logging.info(f"🔍 Stage detection for {milestone_id}: Found stage {potential_stage} from milestone ID pattern")
-                    stage = potential_stage
-                else:
-                    logging.info(f"🔍 Stage detection for {milestone_id}: No stage found in ID, using default stage 1")
-            else:
-                logging.info(f"🔍 Stage detection for {milestone_id}: Explicit stage {stage} found in content")
+            # For Claude-driven execution, create a single task containing the entire milestone
+            claude_task = {
+                "id": f"{milestone_id}_claude_execution",
+                "title": f"Claude Implementation: {title}",
+                "description": f"Execute milestone {milestone_id} using Claude Code",
+                "milestone_content": content,
+                "type": "claude_driven",
+                "priority": "high"
+            }
             
-            # Log preprocessing success
-            logging.info(f"✅ Successfully preprocessed {milestone_id}: {len(tasks)} tasks extracted, assigned to stage {stage}")
+            logging.info(f"🤖 Claude-driven mode: Milestone {milestone_id} ready for execution (Stage {stage})")
             
             return {
                 "id": milestone_id,
                 "title": title,
                 "description": description,
                 "stage": stage,
-                "tasks": tasks,
+                "tasks": [claude_task],
                 "dependencies": dependencies,
                 "filepath": str(filepath)
             }
@@ -631,8 +597,8 @@ class MilestoneOrchestrator:
         stage_start_time = time.time()
         stage_results = []
         
-        # Prepare worktrees for parallel execution
-        if self.config["git"]["use_worktrees"]:
+        # Prepare worktrees for parallel execution (skip if use_worktrees is False)
+        if self.config.get("use_worktrees", self.config.get("git", {}).get("use_worktrees", True)):
             self.prepare_stage_worktrees(stage_num, milestones)
         
         # Execute milestones in parallel within the stage
@@ -703,7 +669,7 @@ class MilestoneOrchestrator:
             return stage_success
         
         # If stage was successful and using worktrees, merge them sequentially
-        if stage_success and self.config["git"]["use_worktrees"]:
+        if stage_success and self.config.get("use_worktrees", self.config.get("git", {}).get("use_worktrees", True)):
             merge_success = self.merge_stage_worktrees(stage_num, milestones)
             if not merge_success:
                 logging.error(f"Stage {stage_num} worktree merging failed")
@@ -974,7 +940,7 @@ class MilestoneOrchestrator:
                     logging.warning(f"Milestone {milestone_id} failed code review quality gates")
             
             # Commit worktree changes if milestone succeeded
-            if milestone_success and self.config["git"]["use_worktrees"]:
+            if milestone_success and self.config.get("use_worktrees", self.config.get("git", {}).get("use_worktrees", True)):
                 commit_success = self.commit_milestone_worktree(milestone_id, milestone)
                 if not commit_success:
                     logging.warning(f"Failed to commit worktree for milestone {milestone_id}")
@@ -1183,11 +1149,19 @@ class MilestoneOrchestrator:
                 if self.verbose:
                     print(f"      * Executing task: {task.get('title', task_id)}")
                 
-                result = self.claude_wrapper.execute_task(
-                    task, 
-                    worktree_path=self.state.state["worktree_paths"].get(milestone_id),
-                    timeout=self.config["execution"]["task_timeout"]
-                )
+                # Handle Claude-driven tasks differently
+                if task.get("type") == "claude_driven":
+                    result = self.claude_wrapper.execute_milestone_directly(
+                        milestone_content=task.get("milestone_content"),
+                        milestone_id=milestone_id,
+                        timeout=self.config["execution"]["task_timeout"]
+                    )
+                else:
+                    result = self.claude_wrapper.execute_task(
+                        task, 
+                        worktree_path=self.state.state["worktree_paths"].get(milestone_id),
+                        timeout=self.config["execution"]["task_timeout"]
+                    )
                 
                 if self.verbose:
                     status = "[OK]" if result.success else "[ERR]"
@@ -1321,7 +1295,7 @@ class MilestoneOrchestrator:
         """Cleanup resources"""
         try:
             # Cleanup worktrees
-            if self.config["git"]["use_worktrees"]:
+            if self.config.get("use_worktrees", self.config.get("git", {}).get("use_worktrees", True)):
                 for milestone_id, worktree_path in self.state.state.get("worktree_paths", {}).items():
                     try:
                         self.worktree_manager.cleanup_worktree(worktree_path)

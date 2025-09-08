@@ -7,12 +7,12 @@
 # PATCH: Bug fixes
 # BUILD: Build number for tracking deployments
 
-__version__ = "1.0.1.001"
-__version_info__ = (1, 0, 1, 1)
+__version__ = "1.2.0.001"
+__version_info__ = (1, 2, 0, 1)
 
 # Build information
-BUILD_DATE = "2025-01-07"
-BUILD_COMMIT = "c6ede2b"  # Latest commit hash
+BUILD_DATE = "2025-09-08"
+BUILD_COMMIT = "claude-driven"  # Latest commit hash
 
 def get_version_string() -> str:
     """Get formatted version string"""
