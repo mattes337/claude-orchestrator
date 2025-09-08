@@ -188,6 +188,8 @@ class MilestoneOrchestrator:
         
         # Override base_branch with current branch
         current_branch = self.get_current_branch()
+        if "git" not in self.config:
+            self.config["git"] = {}
         self.config["git"]["base_branch"] = current_branch
         logging.info(f"Using current branch as base: {current_branch}")
         
@@ -607,7 +609,7 @@ class MilestoneOrchestrator:
         stage_results = []
         
         # Prepare worktrees for parallel execution
-        if self.config["git"]["use_worktrees"]:
+        if self.config.get("git", {}).get("use_worktrees", False):
             self.prepare_stage_worktrees(stage_num, milestones)
         
         # Execute milestones in parallel within the stage
@@ -678,7 +680,7 @@ class MilestoneOrchestrator:
             return stage_success
         
         # If stage was successful and using worktrees, merge them sequentially
-        if stage_success and self.config["git"]["use_worktrees"]:
+        if stage_success and self.config.get("git", {}).get("use_worktrees", False):
             merge_success = self.merge_stage_worktrees(stage_num, milestones)
             if not merge_success:
                 logging.error(f"Stage {stage_num} worktree merging failed")
@@ -706,8 +708,8 @@ class MilestoneOrchestrator:
             try:
                 worktree_path = self.worktree_manager.create_worktree(
                     milestone["id"], 
-                    self.config["git"]["base_branch"],
-                    prefix=self.config["git"]["worktree_prefix"]
+                    self.config.get("git", {}).get("base_branch", "main"),
+                    prefix=self.config.get("git", {}).get("worktree_prefix", "milestone-")
                 )
                 self.state.state["worktree_paths"][milestone["id"]] = worktree_path
                 logging.debug(f"Created worktree for {milestone['id']}: {worktree_path}")
@@ -741,7 +743,7 @@ class MilestoneOrchestrator:
                 branch_name = worktree_info["branch"]
                 
                 # Switch to base branch and merge the feature branch
-                base_branch = self.config["git"]["base_branch"]
+                base_branch = self.config.get("git", {}).get("base_branch", "main")
                 
                 merge_result = subprocess.run([
                     "git", "checkout", base_branch
@@ -949,7 +951,7 @@ class MilestoneOrchestrator:
                     logging.warning(f"Milestone {milestone_id} failed code review quality gates")
             
             # Commit worktree changes if milestone succeeded
-            if milestone_success and self.config["git"]["use_worktrees"]:
+            if milestone_success and self.config.get("git", {}).get("use_worktrees", False):
                 commit_success = self.commit_milestone_worktree(milestone_id, milestone)
                 if not commit_success:
                     logging.warning(f"Failed to commit worktree for milestone {milestone_id}")
@@ -998,14 +1000,14 @@ class MilestoneOrchestrator:
             # Step 1: Pre-review milestone validation with Claude Code
             milestone_validation = self._conduct_pre_review_validation(milestone_id, milestone, worktree_path)
             
-            if not milestone_validation.success:
+            if not milestone_validation.valid:
                 if self.verbose:
-                    print(f"      [MILESTONE_VALIDATION] Failed: {milestone_validation.error}")
+                    print(f"      [MILESTONE_VALIDATION] Failed: {'; '.join(milestone_validation.errors)}")
                 
                 # Execute gap fixing if validation fails
                 gap_fix_result = self._execute_stage_milestone_gap_fix(
                     milestone_id, 
-                    milestone_validation.error, 
+                    '; '.join(milestone_validation.errors), 
                     worktree_path
                 )
                 
@@ -1173,7 +1175,7 @@ class MilestoneOrchestrator:
                 self.rate_limiter.wait_if_needed()
                 
                 # System resource check (only if enabled)
-                if self.config["advanced"]["enable_system_monitoring"]:
+                if self.config.get("advanced", {}).get("enable_system_monitoring", False):
                     if not self.system_monitor.check_resources():
                         logging.warning("System resources low, waiting...")
                         time.sleep(30)
@@ -1201,15 +1203,15 @@ class MilestoneOrchestrator:
                             milestone_id
                         )
                         
-                        if not validation_result.success:
-                            logging.warning(f"Milestone validation failed for {task_id}: {validation_result.error}")
+                        if not validation_result.valid:
+                            logging.warning(f"Milestone validation failed for {task_id}: {'; '.join(validation_result.errors)}")
                             if self.verbose:
                                 print(f"      [VALIDATION] Milestone implementation incomplete, retrying...")
                             
                             # Re-execute with gap information
                             gap_result = self._execute_milestone_gap_fix(
                                 task, 
-                                validation_result.error,
+                                '; '.join(validation_result.errors),
                                 self.state.state["worktree_paths"].get(milestone_id)
                             )
                             
@@ -1217,7 +1219,7 @@ class MilestoneOrchestrator:
                                 result = gap_result  # Use the gap-fixed result
                             else:
                                 logging.error(f"Gap fix failed for {task_id}: {gap_result.error}")
-                                result = TaskResult(task_id, False, error=f"Milestone validation failed: {validation_result.error}")
+                                result = TaskResult(task_id, False, error=f"Milestone validation failed: {'; '.join(validation_result.errors)}")
                     
                     if result.success:  # Check again after potential gap fixing
                         self.state.state["completed_tasks"].add(task_id)
@@ -1281,14 +1283,14 @@ Begin validation now."""
                 output = validation_result.get("output", "").strip()
                 
                 if "VALIDATION: COMPLETE" in output:
-                    return ValidationResult(True, "Implementation complete")
+                    return ValidationResult(True, [], [])
                 else:
                     # Extract gap information
                     gap_info = output
                     if "VALIDATION: INCOMPLETE" in output:
                         gap_info = output.split("VALIDATION: INCOMPLETE - ", 1)[1] if " - " in output else output
                     
-                    return ValidationResult(False, gap_info)
+                    return ValidationResult(False, [gap_info], [])
                     
             finally:
                 if worktree_path:
@@ -1296,7 +1298,7 @@ Begin validation now."""
                     
         except Exception as e:
             logging.error(f"Milestone validation error: {e}")
-            return ValidationResult(False, f"Validation error: {e}")
+            return ValidationResult(False, [f"Validation error: {e}"], [])
     
     def _execute_milestone_gap_fix(self, task: Dict, gap_info: str, worktree_path: str) -> 'TaskResult':
         """Execute milestone implementation to fix identified gaps"""
@@ -1351,7 +1353,7 @@ Begin gap fixing now."""
             # Get milestone filepath to read raw content
             milestone_filepath = milestone.get('filepath', '')
             if not milestone_filepath or not os.path.exists(milestone_filepath):
-                return ValidationResult(False, "Milestone file not found")
+                return ValidationResult(False, ["Milestone file not found"], [])
             
             # Read milestone content
             milestone_content = Path(milestone_filepath).read_text(encoding='utf-8')
@@ -1386,14 +1388,14 @@ Begin comprehensive validation now."""
                 output = validation_result.get("output", "").strip()
                 
                 if "MILESTONE_VALIDATION: COMPLETE" in output:
-                    return ValidationResult(True, "Milestone validation passed")
+                    return ValidationResult(True, [], [])
                 else:
                     # Extract gap information
                     gap_info = output
                     if "MILESTONE_VALIDATION: INCOMPLETE" in output:
                         gap_info = output.split("MILESTONE_VALIDATION: INCOMPLETE - ", 1)[1] if " - " in output else output
                     
-                    return ValidationResult(False, gap_info)
+                    return ValidationResult(False, [gap_info], [])
                     
             finally:
                 if worktree_path:
@@ -1401,7 +1403,7 @@ Begin comprehensive validation now."""
                     
         except Exception as e:
             logging.error(f"Pre-review validation error: {e}")
-            return ValidationResult(False, f"Pre-review validation error: {e}")
+            return ValidationResult(False, [f"Pre-review validation error: {e}"], [])
     
     def _execute_stage_milestone_gap_fix(self, milestone_id: str, gap_info: str, worktree_path: str) -> bool:
         """Execute gap fixing for milestone during code review stage"""
@@ -1578,7 +1580,8 @@ Begin comprehensive gap fixing now."""
         """Cleanup resources"""
         try:
             # Cleanup worktrees
-            if self.config["git"]["use_worktrees"]:
+            use_worktrees = self.config.get("git", {}).get("use_worktrees", False)
+            if use_worktrees and hasattr(self, 'state') and hasattr(self, 'worktree_manager'):
                 for milestone_id, worktree_path in self.state.state.get("worktree_paths", {}).items():
                     try:
                         self.worktree_manager.cleanup_worktree(worktree_path)
@@ -1591,7 +1594,8 @@ Begin comprehensive gap fixing now."""
                 self.executor.shutdown(wait=True)
             
             # Save final state
-            self.state.save_state()
+            if hasattr(self, 'state'):
+                self.state.save_state()
             
             logging.info("Cleanup completed")
             
