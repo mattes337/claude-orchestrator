@@ -430,7 +430,7 @@ class MilestoneOrchestrator:
                     logging.info(f"Running full preprocessing for {milestone_id} to create task format")
                     try:
                         # Run the preprocessor to convert to proper format
-                        processed_content = self.preprocessor.convert_to_standard_format(original_content, milestone_id)
+                        processed_content = self.preprocessor.preprocess_milestone(filepath)
                         
                         # Add processed marker to prevent loops
                         processed_content += "\n\n<!-- PROCESSED BY ORCHESTRATOR -->\n"
