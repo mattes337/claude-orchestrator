@@ -1710,7 +1710,7 @@ def main():
         if args.whatif:
             import datetime
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            whatif_file = f"whatif_prompts_{timestamp}.txt"
+            whatif_file = f".orchestrator/whatif_prompts_{timestamp}.txt"
             
             try:
                 with open(whatif_file, 'w', encoding='utf-8') as f:
@@ -1726,7 +1726,7 @@ def main():
                         if prompt_entry.get('simulated_result'):
                             f.write(f"**Simulated Result:** {prompt_entry['simulated_result']}\n")
                         f.write("\n**Command:**\n")
-                        f.write(f"```bash\n{prompt_entry['command']}\n```\n\n")
+                        f.write(f"```bash\n{prompt_entry['command_would_be']}\n```\n\n")
                         f.write("**Prompt:**\n")
                         f.write(f"```\n{prompt_entry['prompt']}\n```\n\n")
                         f.write("---\n\n")

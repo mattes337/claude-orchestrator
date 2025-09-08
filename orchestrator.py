@@ -1706,7 +1706,7 @@ def main():
         if args.whatif:
             import datetime
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            whatif_file = f"whatif_prompts_{timestamp}.txt"
+            whatif_file = f".orchestrator/whatif_prompts_{timestamp}.txt"
             
             try:
                 with open(whatif_file, 'w', encoding='utf-8') as f:
