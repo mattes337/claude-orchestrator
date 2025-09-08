@@ -361,9 +361,16 @@ class MilestoneOrchestrator:
         for file_path in all_files:
             logging.info(f"  - {file_path.name} ({'file' if file_path.is_file() else 'directory'})")
         
-        # Find all .md files
-        md_files = list(milestones_dir.glob("*.md"))
-        logging.info(f"📄 Found {len(md_files)} .md files:")
+        # Find all .md files, excluding README.md
+        all_md_files = list(milestones_dir.glob("*.md"))
+        md_files = [f for f in all_md_files if f.name.lower() != "readme.md"]
+        
+        if len(all_md_files) != len(md_files):
+            excluded_count = len(all_md_files) - len(md_files)
+            logging.info(f"📄 Found {len(all_md_files)} .md files, excluded {excluded_count} (README.md)")
+        else:
+            logging.info(f"📄 Found {len(md_files)} .md files:")
+        
         for md_file in md_files:
             logging.info(f"  - {md_file.name}")
         
@@ -411,6 +418,33 @@ class MilestoneOrchestrator:
             # Extract tasks using the preprocessor's intelligent extraction
             original_content = filepath.read_text(encoding='utf-8')
             tasks = self.preprocessor.extract_tasks(original_content, milestone_id)
+            
+            # If no tasks found, try to run full preprocessing to create proper format
+            if not tasks:
+                logging.warning(f"No tasks found for {milestone_id}, checking if preprocessing is needed")
+                
+                # Check if file already has been processed marker
+                if "<!-- PROCESSED BY ORCHESTRATOR -->" not in original_content:
+                    logging.info(f"Running full preprocessing for {milestone_id} to create task format")
+                    try:
+                        # Run the preprocessor to convert to proper format
+                        processed_content = self.preprocessor.convert_to_standard_format(original_content, milestone_id)
+                        
+                        # Add processed marker to prevent loops
+                        processed_content += "\n\n<!-- PROCESSED BY ORCHESTRATOR -->\n"
+                        
+                        # Write the processed content back to file
+                        filepath.write_text(processed_content, encoding='utf-8')
+                        logging.info(f"✅ Preprocessed {milestone_id} and updated file")
+                        
+                        # Try extracting tasks again from processed content
+                        tasks = self.preprocessor.extract_tasks(processed_content, milestone_id)
+                        logging.info(f"📝 After preprocessing: {len(tasks)} tasks found for {milestone_id}")
+                        
+                    except Exception as preprocess_error:
+                        logging.error(f"Failed to preprocess {milestone_id}: {preprocess_error}")
+                else:
+                    logging.info(f"File {milestone_id} already processed, but still no tasks found")
             
             # Extract dependencies
             deps_match = re.search(r'## Dependencies\n(.+?)(?=\n##|\Z)', normalized_content, re.MULTILINE | re.DOTALL)
