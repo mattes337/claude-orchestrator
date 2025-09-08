@@ -22,35 +22,8 @@ import shutil
 import re
 import uuid
 
-@dataclass
-class ValidationResult:
-    """Result of milestone or task validation"""
-    valid: bool
-    errors: List[str]
-    warnings: List[str]
-    score: float = 0.0
-    
-    def add_error(self, error: str):
-        self.errors.append(error)
-        self.valid = False
-    
-    def add_warning(self, warning: str):
-        self.warnings.append(warning)
-
-@dataclass
-class CodeReviewResult:
-    """Result of code review process"""
-    success: bool
-    quality_score: float
-    todos_found: List[str]
-    quality_gates_failed: List[str]
-    recommendations: List[str]
-    report_file: str
-    iterations_completed: int = 0
-    
-    @property
-    def has_quality_issues(self) -> bool:
-        return len(self.todos_found) > 0 or len(self.quality_gates_failed) > 0 or self.quality_score < 0.8
+# Import shared types to avoid circular imports
+from .types_shared import ValidationResult, CodeReviewResult, TaskResult
 
 class RateLimitManager:
     """Manages API rate limiting with intelligent backoff"""
@@ -257,7 +230,7 @@ class SystemMonitor:
 class WorktreeManager:
     """Manages git worktrees for parallel development"""
     
-    def __init__(self, base_dir: str = "worktrees"):
+    def __init__(self, base_dir: str = ".worktrees"):
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(exist_ok=True)
         self.active_worktrees = {}
@@ -294,17 +267,16 @@ class WorktreeManager:
         
         try:
             # Create new branch
-            branch_name = f"feature/{worktree_name}"
+            branch_name = f"milestone/{name}"
             subprocess.run(
                 ["git", "checkout", base_branch],
                 check=True, capture_output=True,
                 encoding='utf-8', errors='replace'
             )
             
-            # Create worktree
+            # Create worktree using correct syntax: git worktree add -b "branch" path
             subprocess.run([
-                "git", "worktree", "add", str(worktree_path), 
-                "-b", branch_name, base_branch
+                "git", "worktree", "add", "-b", branch_name, str(worktree_path)
             ], check=True, capture_output=True, encoding='utf-8', errors='replace')
             
             self.active_worktrees[name] = {
@@ -416,7 +388,7 @@ class ClaudeCodeWrapper:
     def execute_task(self, task: Dict[str, Any], worktree_path: Optional[str] = None, 
                     timeout: int = 300) -> 'TaskResult':
         """Execute a task using Claude Code"""
-        from orchestrator import TaskResult  # Avoid circular import
+        # TaskResult is now imported from types_shared
         
         if not self.is_available:
             error_msg = f"Claude Code CLI not available at path: {self.claude_path}"
@@ -725,7 +697,7 @@ class MilestoneValidator:
     def validate_milestone(self, milestone: Dict[str, Any], 
                           task_results: List['TaskResult']) -> ValidationResult:
         """Validate milestone completion against results"""
-        from orchestrator import TaskResult  # Avoid circular import
+        # TaskResult is now imported from types_shared
         
         result = ValidationResult(True, [], [])
         
