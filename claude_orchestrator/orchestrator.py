@@ -21,6 +21,15 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import signal
 
+# Import version information
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+from _version import __version__, get_version_string, get_detailed_version
+
+# Import shared types
+from types_shared import ValidationResult, CodeReviewResult, TaskResult
+
 # Import advanced modules
 from .advanced import (
     RateLimitManager,
@@ -28,8 +37,7 @@ from .advanced import (
     WorktreeManager,
     ClaudeCodeWrapper,
     MilestoneValidator,
-    CodeReviewManager,
-    CodeReviewResult
+    CodeReviewManager
 )
 from .milestone_preprocessor import MilestonePreprocessor
 
@@ -173,18 +181,7 @@ class OrchestratorState:
             os.remove(self.state_file)
         logging.info("Orchestrator state has been reset")
 
-class TaskResult:
-    """Represents the result of a task execution"""
-    
-    def __init__(self, task_id: str, success: bool, output: str = "", 
-                 error: str = "", duration: float = 0.0, retry_count: int = 0):
-        self.task_id = task_id
-        self.success = success
-        self.output = output
-        self.error = error
-        self.duration = duration
-        self.retry_count = retry_count
-        self.timestamp = datetime.now().isoformat()
+# TaskResult is now imported from types_shared
 
 class MilestoneOrchestrator:
     """Main orchestrator class for milestone execution"""
@@ -1316,7 +1313,12 @@ def main():
     # Setup Windows console for Unicode handling
     setup_windows_console()
     
-    parser = argparse.ArgumentParser(description="Claude Code Milestone Orchestrator")
+    parser = argparse.ArgumentParser(
+        description=f"Claude Code Milestone Orchestrator v{__version__}",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=get_detailed_version()
+    )
+    parser.add_argument("--version", action="version", version=get_version_string())
     parser.add_argument("--config", default="orchestrator.config.json",
                       help="Configuration file path")
     parser.add_argument("--resume", action="store_true",
@@ -1337,6 +1339,10 @@ def main():
     args = parser.parse_args()
     
     try:
+        # Show version on startup
+        print(get_version_string())
+        print()
+        
         # Initialize orchestrator
         orchestrator = MilestoneOrchestrator(args.config)
         orchestrator.verbose = args.verbose
