@@ -22,13 +22,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import signal
 
 # Import version information
-from _version import __version__, get_version_string, get_detailed_version
+from ._version import __version__, get_version_string, get_detailed_version
 
 # Import shared types
-from types_shared import ValidationResult, CodeReviewResult, TaskResult
+from .types_shared import ValidationResult, CodeReviewResult, TaskResult
 
 # Import advanced modules
-from advanced import (
+from .advanced import (
     RateLimitManager,
     SystemMonitor,
     WorktreeManager,
@@ -36,7 +36,7 @@ from advanced import (
     MilestoneValidator,
     CodeReviewManager
 )
-from milestone_preprocessor import MilestonePreprocessor
+from .milestone_preprocessor import MilestonePreprocessor
 
 def setup_windows_console():
     """Setup console encoding for Windows to handle Unicode characters"""
@@ -184,8 +184,6 @@ class MilestoneOrchestrator:
     """Main orchestrator class for milestone execution"""
     
     def __init__(self, config_path: str = "orchestrator.config.json"):
-        # Ensure .orchestrator directory exists
-        Path(".orchestrator").mkdir(exist_ok=True)
         self.config = self.load_config(config_path)
         
         # Override base_branch with current branch
@@ -203,6 +201,7 @@ class MilestoneOrchestrator:
         self.system_monitor = SystemMonitor()
         self.worktree_manager = WorktreeManager()
         self.claude_wrapper = ClaudeCodeWrapper()
+        # Will set whatif mode later when flag is available
         self.validator = MilestoneValidator()
         self.preprocessor = MilestonePreprocessor()
         self.code_reviewer = CodeReviewManager(self.claude_wrapper, self.config)
@@ -221,6 +220,8 @@ class MilestoneOrchestrator:
         
         # Output control
         self.verbose = False
+        self.whatif = False
+        self.whatif_prompts = []  # Store all prompts for whatif mode
         
         logging.info("Orchestrator initialized successfully")
     
@@ -328,6 +329,9 @@ class MilestoneOrchestrator:
     
     def setup_logging(self):
         """Setup logging configuration"""
+        # Ensure .orchestrator directory exists
+        Path(".orchestrator").mkdir(exist_ok=True)
+        
         log_level = getattr(logging, self.config.get("logging", {}).get("level", "INFO").upper())
         log_format = self.config.get("logging", {}).get("format", 
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -402,53 +406,58 @@ class MilestoneOrchestrator:
         return milestones
     
     def parse_milestone_file(self, filepath: Path) -> Optional[Dict]:
-        """Parse a milestone file for Claude-driven execution"""
+        """Parse a milestone file and create a single task for Claude Code to handle"""
         try:
-            # Read the milestone file directly without preprocessing
+            # Read the raw milestone content
+            original_content = filepath.read_text(encoding='utf-8')
             milestone_id = filepath.stem
-            content = filepath.read_text(encoding='utf-8')
             
-            # Extract basic metadata
-            title_match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
+            # Extract basic metadata from the raw content
+            title_match = re.search(r'^#\s+(.+)$', original_content, re.MULTILINE)
             title = title_match.group(1) if title_match else milestone_id
             
-            # Extract description (everything before first ##)
-            desc_match = re.search(r'^#\s+.+?\n\n(.+?)(?=\n##|\Z)', content, re.MULTILINE | re.DOTALL)
+            # Extract description (everything after title until first ##)
+            desc_match = re.search(r'^#\s+.+?\n\n(.+?)(?=\n##|\Z)', original_content, re.MULTILINE | re.DOTALL)
             description = desc_match.group(1).strip() if desc_match else ""
             
-            # Extract dependencies from content
-            deps_match = re.search(r'## Dependencies\n(.+?)(?=\n##|\Z)', content, re.MULTILINE | re.DOTALL)
+            # Extract dependencies
+            deps_match = re.search(r'## Dependencies\n(.+?)(?=\n##|\Z)', original_content, re.MULTILINE | re.DOTALL)
             dependencies = []
             if deps_match:
                 deps_text = deps_match.group(1)
-                # Handle "None specified" case
                 if "None specified" not in deps_text:
                     dependencies = re.findall(r'- (.+)', deps_text)
             
-            # Extract stage from milestone ID (e.g., "4a" -> stage 4)
+            # Extract stage information from milestone ID (e.g., "1a" -> stage 1)
             stage = 1
-            id_stage_match = re.search(r'^(\d+)[a-z]?', milestone_id)
-            if id_stage_match:
-                stage = int(id_stage_match.group(1))
+            if milestone_id:
+                id_stage_match = re.search(r'^(\d+)[a-z]?', milestone_id)
+                if id_stage_match:
+                    stage = int(id_stage_match.group(1))
+                    logging.info(f"🔍 Detected stage {stage} from milestone ID: {milestone_id}")
+                else:
+                    logging.info(f"🔍 No stage found in ID {milestone_id}, using default stage 1")
             
-            # For Claude-driven execution, create a single task containing the entire milestone
-            claude_task = {
+            # Create a single task that passes the entire milestone to Claude Code
+            task = {
                 "id": f"{milestone_id}_claude_execution",
-                "title": f"Claude Implementation: {title}",
-                "description": f"Execute milestone {milestone_id} using Claude Code",
-                "milestone_content": content,
-                "type": "claude_driven",
-                "priority": "high"
+                "title": f"Implement {title}",
+                "description": f"Let Claude Code implement the entire milestone: {title}",
+                "priority": "high",
+                "estimated_time": 60,
+                "milestone_content": original_content,
+                "milestone_filepath": str(filepath),
+                "claude_driven": True
             }
             
-            logging.info(f"🤖 Claude-driven mode: Milestone {milestone_id} ready for execution (Stage {stage})")
+            logging.info(f"✅ Created Claude-driven task for {milestone_id}: {title}")
             
             return {
                 "id": milestone_id,
                 "title": title,
                 "description": description,
                 "stage": stage,
-                "tasks": [claude_task],
+                "tasks": [task],  # Single task containing the whole milestone
                 "dependencies": dependencies,
                 "filepath": str(filepath)
             }
@@ -597,8 +606,8 @@ class MilestoneOrchestrator:
         stage_start_time = time.time()
         stage_results = []
         
-        # Prepare worktrees for parallel execution (skip if use_worktrees is False)
-        if self.config.get("use_worktrees", self.config.get("git", {}).get("use_worktrees", True)):
+        # Prepare worktrees for parallel execution
+        if self.config["git"]["use_worktrees"]:
             self.prepare_stage_worktrees(stage_num, milestones)
         
         # Execute milestones in parallel within the stage
@@ -669,7 +678,7 @@ class MilestoneOrchestrator:
             return stage_success
         
         # If stage was successful and using worktrees, merge them sequentially
-        if stage_success and self.config.get("use_worktrees", self.config.get("git", {}).get("use_worktrees", True)):
+        if stage_success and self.config["git"]["use_worktrees"]:
             merge_success = self.merge_stage_worktrees(stage_num, milestones)
             if not merge_success:
                 logging.error(f"Stage {stage_num} worktree merging failed")
@@ -940,7 +949,7 @@ class MilestoneOrchestrator:
                     logging.warning(f"Milestone {milestone_id} failed code review quality gates")
             
             # Commit worktree changes if milestone succeeded
-            if milestone_success and self.config.get("use_worktrees", self.config.get("git", {}).get("use_worktrees", True)):
+            if milestone_success and self.config["git"]["use_worktrees"]:
                 commit_success = self.commit_milestone_worktree(milestone_id, milestone)
                 if not commit_success:
                     logging.warning(f"Failed to commit worktree for milestone {milestone_id}")
@@ -977,16 +986,40 @@ class MilestoneOrchestrator:
             }
     
     def conduct_milestone_code_review(self, milestone_id: str, milestone: Dict, stage_num: int) -> CodeReviewResult:
-        """Conduct iterative code review for a milestone"""
+        """Conduct milestone validation and iterative code review"""
         logging.info(f"Conducting code review for milestone {milestone_id}")
         
         if self.verbose:
-            print(f"      → Running code review for {milestone_id}...")
+            print(f"      → Running milestone validation and code review for {milestone_id}...")
         
         worktree_path = self.state.state.get("worktree_paths", {}).get(milestone_id)
         
         try:
-            # Conduct initial code review with iterative improvement
+            # Step 1: Pre-review milestone validation with Claude Code
+            milestone_validation = self._conduct_pre_review_validation(milestone_id, milestone, worktree_path)
+            
+            if not milestone_validation.success:
+                if self.verbose:
+                    print(f"      [MILESTONE_VALIDATION] Failed: {milestone_validation.error}")
+                
+                # Execute gap fixing if validation fails
+                gap_fix_result = self._execute_stage_milestone_gap_fix(
+                    milestone_id, 
+                    milestone_validation.error, 
+                    worktree_path
+                )
+                
+                if not gap_fix_result:
+                    return CodeReviewResult(
+                        success=False,
+                        quality_score=0.0,
+                        todos_found=[],
+                        quality_gates_failed=[f"Milestone validation failed: {milestone_validation.error}"],
+                        recommendations=["Review and complete milestone requirements"],
+                        report_file=f"milestone_validation_{milestone_id}_failed.md"
+                    )
+            
+            # Step 2: Conduct regular code review
             review_result = self.code_reviewer.conduct_code_review(
                 milestone_id, 
                 worktree_path=worktree_path, 
@@ -1149,28 +1182,47 @@ class MilestoneOrchestrator:
                 if self.verbose:
                     print(f"      * Executing task: {task.get('title', task_id)}")
                 
-                # Handle Claude-driven tasks differently
-                if task.get("type") == "claude_driven":
-                    result = self.claude_wrapper.execute_milestone_directly(
-                        milestone_content=task.get("milestone_content"),
-                        milestone_id=milestone_id,
-                        timeout=self.config["execution"]["task_timeout"]
-                    )
-                else:
-                    result = self.claude_wrapper.execute_task(
-                        task, 
-                        worktree_path=self.state.state["worktree_paths"].get(milestone_id),
-                        timeout=self.config["execution"]["task_timeout"]
-                    )
+                result = self.claude_wrapper.execute_task(
+                    task, 
+                    worktree_path=self.state.state["worktree_paths"].get(milestone_id),
+                    timeout=self.config["execution"]["task_timeout"]
+                )
                 
                 if self.verbose:
                     status = "[OK]" if result.success else "[ERR]"
                     print(f"      {status} Task {task_id}: {'Completed' if result.success else result.error}")
                 
                 if result.success:
-                    self.state.state["completed_tasks"].add(task_id)
-                    logging.info(f"Task {task_id} completed successfully (attempt {attempt + 1})")
-                    return result
+                    # For Claude-driven tasks, validate implementation against milestone
+                    if task.get('claude_driven') and 'milestone_content' in task:
+                        validation_result = self._validate_milestone_implementation(
+                            task, 
+                            self.state.state["worktree_paths"].get(milestone_id),
+                            milestone_id
+                        )
+                        
+                        if not validation_result.success:
+                            logging.warning(f"Milestone validation failed for {task_id}: {validation_result.error}")
+                            if self.verbose:
+                                print(f"      [VALIDATION] Milestone implementation incomplete, retrying...")
+                            
+                            # Re-execute with gap information
+                            gap_result = self._execute_milestone_gap_fix(
+                                task, 
+                                validation_result.error,
+                                self.state.state["worktree_paths"].get(milestone_id)
+                            )
+                            
+                            if gap_result.success:
+                                result = gap_result  # Use the gap-fixed result
+                            else:
+                                logging.error(f"Gap fix failed for {task_id}: {gap_result.error}")
+                                result = TaskResult(task_id, False, error=f"Milestone validation failed: {validation_result.error}")
+                    
+                    if result.success:  # Check again after potential gap fixing
+                        self.state.state["completed_tasks"].add(task_id)
+                        logging.info(f"Task {task_id} completed successfully (attempt {attempt + 1})")
+                        return result
                 else:
                     error_details = f"Task {task_id} failed (attempt {attempt + 1}): {result.error}"
                     logging.warning(error_details)
@@ -1195,6 +1247,237 @@ class MilestoneOrchestrator:
         self.state.state["failed_tasks"].add(task_id)
         return TaskResult(task_id, False, error=f"Failed after {max_retries + 1} attempts")
     
+    def _validate_milestone_implementation(self, task: Dict, worktree_path: str, milestone_id: str) -> 'ValidationResult':
+        """Validate that milestone implementation matches requirements"""
+        try:
+            milestone_content = task.get('milestone_content', '')
+            
+            # Create validation prompt
+            validation_prompt = f"""Please validate if the current implementation matches the milestone requirements.
+
+=== MILESTONE SPECIFICATION ===
+{milestone_content}
+=== END MILESTONE SPECIFICATION ===
+
+VALIDATION INSTRUCTIONS:
+1. Analyze the current project files and structure
+2. Compare what has been implemented against the milestone specification above
+3. Check if all acceptance criteria have been met
+4. Identify any gaps or missing implementations
+
+RESPONSE FORMAT:
+If implementation is complete: "VALIDATION: COMPLETE - All requirements satisfied"
+If implementation is incomplete: "VALIDATION: INCOMPLETE - [specific gaps found]"
+
+Begin validation now."""
+
+            # Execute validation in the worktree
+            original_cwd = os.getcwd()
+            if worktree_path and os.path.exists(worktree_path):
+                os.chdir(worktree_path)
+            
+            try:
+                validation_result = self.claude_wrapper._execute_claude_command(validation_prompt, 60, context="validation")
+                output = validation_result.get("output", "").strip()
+                
+                if "VALIDATION: COMPLETE" in output:
+                    return ValidationResult(True, "Implementation complete")
+                else:
+                    # Extract gap information
+                    gap_info = output
+                    if "VALIDATION: INCOMPLETE" in output:
+                        gap_info = output.split("VALIDATION: INCOMPLETE - ", 1)[1] if " - " in output else output
+                    
+                    return ValidationResult(False, gap_info)
+                    
+            finally:
+                if worktree_path:
+                    os.chdir(original_cwd)
+                    
+        except Exception as e:
+            logging.error(f"Milestone validation error: {e}")
+            return ValidationResult(False, f"Validation error: {e}")
+    
+    def _execute_milestone_gap_fix(self, task: Dict, gap_info: str, worktree_path: str) -> 'TaskResult':
+        """Execute milestone implementation to fix identified gaps"""
+        try:
+            milestone_content = task.get('milestone_content', '')
+            
+            # Create gap-fixing prompt
+            gap_prompt = f"""The previous implementation was incomplete. Please fix the identified gaps.
+
+=== MILESTONE SPECIFICATION ===
+{milestone_content}
+=== END MILESTONE SPECIFICATION ===
+
+=== IDENTIFIED GAPS ===
+{gap_info}
+=== END GAPS ===
+
+INSTRUCTIONS:
+1. Review the current implementation
+2. Address all identified gaps above
+3. Complete any missing parts of the milestone specification
+4. Ensure all acceptance criteria are now satisfied
+5. Create/modify files as needed using Write, Edit, or MultiEdit tools
+
+Begin gap fixing now."""
+
+            # Execute gap fixing
+            original_cwd = os.getcwd()
+            if worktree_path and os.path.exists(worktree_path):
+                os.chdir(worktree_path)
+                
+            try:
+                result = self.claude_wrapper._execute_claude_command(gap_prompt, 300, context="gap_fix")
+                success = self.claude_wrapper._analyze_result(result, task)
+                
+                if success:
+                    return TaskResult(task["id"], True, output=result.get("output", ""), duration=0)
+                else:
+                    return TaskResult(task["id"], False, error=result.get("error", "Gap fix failed"))
+                    
+            finally:
+                if worktree_path:
+                    os.chdir(original_cwd)
+                    
+        except Exception as e:
+            logging.error(f"Gap fixing error: {e}")
+            return TaskResult(task["id"], False, error=f"Gap fixing error: {e}")
+
+    def _conduct_pre_review_validation(self, milestone_id: str, milestone: Dict, worktree_path: str) -> 'ValidationResult':
+        """Conduct pre-review validation comparing implementation to milestone specification"""
+        try:
+            # Get milestone filepath to read raw content
+            milestone_filepath = milestone.get('filepath', '')
+            if not milestone_filepath or not os.path.exists(milestone_filepath):
+                return ValidationResult(False, "Milestone file not found")
+            
+            # Read milestone content
+            milestone_content = Path(milestone_filepath).read_text(encoding='utf-8')
+            
+            # Create comprehensive validation prompt
+            validation_prompt = f"""Please conduct a comprehensive validation of the current implementation against the milestone specification.
+
+=== MILESTONE SPECIFICATION ===
+{milestone_content}
+=== END MILESTONE SPECIFICATION ===
+
+VALIDATION INSTRUCTIONS:
+1. Analyze all files in the current project directory
+2. Compare the current implementation against every requirement in the milestone specification
+3. Check if all acceptance criteria have been satisfied
+4. Verify that the implementation follows best practices and project conventions
+5. Identify any missing functionality, incomplete implementations, or gaps
+
+RESPONSE FORMAT:
+If validation passes: "MILESTONE_VALIDATION: COMPLETE - All requirements fully implemented"
+If validation fails: "MILESTONE_VALIDATION: INCOMPLETE - [detailed description of gaps and missing implementations]"
+
+Begin comprehensive validation now."""
+
+            # Execute validation in the worktree
+            original_cwd = os.getcwd()
+            if worktree_path and os.path.exists(worktree_path):
+                os.chdir(worktree_path)
+            
+            try:
+                validation_result = self.claude_wrapper._execute_claude_command(validation_prompt, 120, context="validation")
+                output = validation_result.get("output", "").strip()
+                
+                if "MILESTONE_VALIDATION: COMPLETE" in output:
+                    return ValidationResult(True, "Milestone validation passed")
+                else:
+                    # Extract gap information
+                    gap_info = output
+                    if "MILESTONE_VALIDATION: INCOMPLETE" in output:
+                        gap_info = output.split("MILESTONE_VALIDATION: INCOMPLETE - ", 1)[1] if " - " in output else output
+                    
+                    return ValidationResult(False, gap_info)
+                    
+            finally:
+                if worktree_path:
+                    os.chdir(original_cwd)
+                    
+        except Exception as e:
+            logging.error(f"Pre-review validation error: {e}")
+            return ValidationResult(False, f"Pre-review validation error: {e}")
+    
+    def _execute_stage_milestone_gap_fix(self, milestone_id: str, gap_info: str, worktree_path: str) -> bool:
+        """Execute gap fixing for milestone during code review stage"""
+        try:
+            # Get all completed milestones in the same stage to provide context
+            completed_milestones = []
+            current_stage = self._extract_stage_from_milestone_id(milestone_id)
+            
+            for completed_task in self.state.state.get("completed_tasks", []):
+                if completed_task.endswith("_claude_execution"):
+                    completed_milestone_id = completed_task.replace("_claude_execution", "")
+                    task_stage = self._extract_stage_from_milestone_id(completed_milestone_id)
+                    if task_stage == current_stage:
+                        # Get milestone filepath and content
+                        milestone_filepath = self._get_milestone_filepath(completed_milestone_id)
+                        if milestone_filepath:
+                            milestone_content = Path(milestone_filepath).read_text(encoding='utf-8')
+                            completed_milestones.append({
+                                'id': completed_milestone_id,
+                                'content': milestone_content
+                            })
+            
+            # Create gap-fixing prompt with all stage milestone context
+            all_milestones_content = ""
+            for ms in completed_milestones:
+                all_milestones_content += f"\n=== MILESTONE {ms['id'].upper()} ===\n{ms['content']}\n=== END {ms['id'].upper()} ===\n"
+            
+            gap_prompt = f"""Implementation gaps have been identified. Please fix all identified issues.
+
+=== ALL STAGE MILESTONE SPECIFICATIONS ===
+{all_milestones_content}
+=== END ALL SPECIFICATIONS ===
+
+=== IDENTIFIED GAPS FOR {milestone_id.upper()} ===
+{gap_info}
+=== END GAPS ===
+
+INSTRUCTIONS:
+1. Review the current project implementation
+2. Consider all milestone specifications in this stage for context
+3. Address all identified gaps for milestone {milestone_id}
+4. Ensure the implementation meets all requirements across all milestones
+5. Create/modify files as needed using Write, Edit, or MultiEdit tools
+6. Maintain consistency with other implemented milestones
+
+Begin comprehensive gap fixing now."""
+
+            # Execute gap fixing
+            original_cwd = os.getcwd()
+            if worktree_path and os.path.exists(worktree_path):
+                os.chdir(worktree_path)
+                
+            try:
+                result = self.claude_wrapper._execute_claude_command(gap_prompt, 600, context="gap_fix")  # Longer timeout for comprehensive fix
+                return result.get("success", True)  # Assume success if no error
+                    
+            finally:
+                if worktree_path:
+                    os.chdir(original_cwd)
+                    
+        except Exception as e:
+            logging.error(f"Stage gap fixing error: {e}")
+            return False
+    
+    def _extract_stage_from_milestone_id(self, milestone_id: str) -> int:
+        """Extract stage number from milestone ID"""
+        import re
+        match = re.search(r'^(\d+)[a-z]', milestone_id)
+        return int(match.group(1)) if match else 1
+    
+    def _get_milestone_filepath(self, milestone_id: str) -> str:
+        """Get filepath for a milestone by ID"""
+        milestones_dir = Path(self.config["milestones_dir"])
+        milestone_file = milestones_dir / f"{milestone_id}.md"
+        return str(milestone_file) if milestone_file.exists() else ""
+
     def validate_milestone_dependencies(self, milestone: Dict) -> bool:
         """Validate that milestone dependencies are satisfied"""
         dependencies = milestone.get("dependencies", [])
@@ -1295,7 +1578,7 @@ class MilestoneOrchestrator:
         """Cleanup resources"""
         try:
             # Cleanup worktrees
-            if self.config.get("use_worktrees", self.config.get("git", {}).get("use_worktrees", True)):
+            if self.config["git"]["use_worktrees"]:
                 for milestone_id, worktree_path in self.state.state.get("worktree_paths", {}).items():
                     try:
                         self.worktree_manager.cleanup_worktree(worktree_path)
@@ -1338,6 +1621,8 @@ def main():
                       help="Execute specific milestone only")
     parser.add_argument("--dry-run", action="store_true",
                       help="Show execution plan without running")
+    parser.add_argument("--whatif", action="store_true",
+                      help="Capture all prompts and commands without execution (includes failure scenarios)")
     parser.add_argument("--verbose", action="store_true",
                       help="Enable verbose output showing detailed progress")
     parser.add_argument("--reset", action="store_true",
@@ -1353,6 +1638,11 @@ def main():
         # Initialize orchestrator
         orchestrator = MilestoneOrchestrator(args.config)
         orchestrator.verbose = args.verbose
+        orchestrator.whatif = args.whatif
+        
+        # Pass whatif mode to components
+        orchestrator.claude_wrapper.whatif = args.whatif
+        orchestrator.claude_wrapper.orchestrator_prompts = orchestrator.whatif_prompts
         
         # Reset state if requested
         if args.reset:
@@ -1411,6 +1701,37 @@ def main():
         
         # Execute milestones
         success = orchestrator.execute_milestones(milestones)
+        
+        # Output whatif results to file if in whatif mode
+        if args.whatif:
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            whatif_file = f"whatif_prompts_{timestamp}.txt"
+            
+            try:
+                with open(whatif_file, 'w', encoding='utf-8') as f:
+                    f.write("# Claude Code Orchestrator - Whatif Mode Results\n")
+                    f.write(f"# Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"# Milestones: {', '.join([m['id'] for m in milestones])}\n\n")
+                    
+                    for i, prompt_entry in enumerate(orchestrator.whatif_prompts, 1):
+                        f.write(f"## Prompt #{i}\n")
+                        f.write(f"**Context:** {prompt_entry['context']}\n")
+                        f.write(f"**Timestamp:** {prompt_entry['timestamp']}\n")
+                        f.write(f"**Timeout:** {prompt_entry['timeout']}s\n")
+                        if prompt_entry.get('simulated_result'):
+                            f.write(f"**Simulated Result:** {prompt_entry['simulated_result']}\n")
+                        f.write("\n**Command:**\n")
+                        f.write(f"```bash\n{prompt_entry['command']}\n```\n\n")
+                        f.write("**Prompt:**\n")
+                        f.write(f"```\n{prompt_entry['prompt']}\n```\n\n")
+                        f.write("---\n\n")
+                
+                print(f"\nWhatif mode results written to: {whatif_file}")
+                print(f"Total prompts captured: {len(orchestrator.whatif_prompts)}")
+            except Exception as e:
+                print(f"Failed to write whatif results: {e}")
+        
         return 0 if success else 1
         
     except KeyboardInterrupt:

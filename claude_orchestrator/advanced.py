@@ -382,6 +382,11 @@ class ClaudeCodeWrapper:
         self.session_id = None
         self.default_timeout = 300
         
+        # Whatif mode settings
+        self.whatif = False
+        self.orchestrator_prompts = []
+        self.whatif_call_count = {}  # Track calls per method for failure simulation
+        
         # Verify Claude Code is available
         self.is_available = self._check_claude_availability()
         if not self.is_available:
@@ -539,8 +544,12 @@ Begin implementation now using the appropriate file creation tools."""
         
         return prompt
     
-    def _execute_claude_command(self, prompt: str, timeout: int) -> Dict[str, Any]:
+    def _execute_claude_command(self, prompt: str, timeout: int, context: str = "unknown") -> Dict[str, Any]:
         """Execute Claude Code command with prompt"""
+        # Handle whatif mode - capture prompts without execution
+        if self.whatif:
+            return self._handle_whatif_execution(prompt, timeout, context)
+        
         try:
             # Write prompt to temporary file
             with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
@@ -598,6 +607,73 @@ Begin implementation now using the appropriate file creation tools."""
                 "output": "",
                 "error": str(e)
             }
+    
+    def _handle_whatif_execution(self, prompt: str, timeout: int, context: str) -> Dict[str, Any]:
+        """Handle whatif mode - capture prompts and simulate responses with failure scenarios"""
+        # Track calls to simulate failures
+        self.whatif_call_count[context] = self.whatif_call_count.get(context, 0) + 1
+        call_number = self.whatif_call_count[context]
+        
+        # Create prompt capture entry
+        prompt_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "context": context,
+            "call_number": call_number,
+            "timeout": timeout,
+            "current_directory": os.getcwd(),
+            "prompt": prompt,
+            "command_would_be": f"{self.claude_path} --print [PROMPT_CONTENT]"
+        }
+        
+        # Simulate failure on first call for certain contexts (for retry testing)
+        simulate_failure = False
+        failure_contexts = ["milestone_validation", "code_review", "gap_fix"]
+        
+        if any(fc in context.lower() for fc in failure_contexts) and call_number == 1:
+            simulate_failure = True
+            prompt_entry["simulated_outcome"] = "FAILURE (first attempt - to test retry logic)"
+            prompt_entry["simulated_reason"] = f"Simulated failure for {context} to test retry and gap-fixing logic"
+        else:
+            prompt_entry["simulated_outcome"] = "SUCCESS"
+            prompt_entry["simulated_reason"] = f"Normal success simulation for {context}"
+        
+        # Store the prompt
+        self.orchestrator_prompts.append(prompt_entry)
+        
+        # Return simulated response
+        if simulate_failure:
+            if "validation" in context.lower():
+                return {
+                    "returncode": 0,
+                    "output": f"VALIDATION: INCOMPLETE - Missing implementation of key components for testing retry logic (simulated failure #{call_number})",
+                    "error": ""
+                }
+            elif "review" in context.lower():
+                return {
+                    "returncode": 0,
+                    "output": f"Code review found issues: Missing tests, incomplete implementation (simulated failure #{call_number})",
+                    "error": ""
+                }
+            else:
+                return {
+                    "returncode": 1,
+                    "output": "",
+                    "error": f"Simulated execution failure for testing (attempt #{call_number})"
+                }
+        else:
+            # Simulate success
+            if "validation" in context.lower():
+                return {
+                    "returncode": 0,
+                    "output": f"VALIDATION: COMPLETE - All requirements fully implemented (simulated success #{call_number})",
+                    "error": ""
+                }
+            else:
+                return {
+                    "returncode": 0,
+                    "output": f"Task completed successfully (simulated success #{call_number})",
+                    "error": ""
+                }
     
     def _analyze_result(self, result: Dict[str, Any], task: Dict[str, Any]) -> bool:
         """Analyze Claude Code execution result"""

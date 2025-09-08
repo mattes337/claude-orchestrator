@@ -201,6 +201,7 @@ class MilestoneOrchestrator:
         self.system_monitor = SystemMonitor()
         self.worktree_manager = WorktreeManager()
         self.claude_wrapper = ClaudeCodeWrapper()
+        # Will set whatif mode later when flag is available
         self.validator = MilestoneValidator()
         self.preprocessor = MilestonePreprocessor()
         self.code_reviewer = CodeReviewManager(self.claude_wrapper, self.config)
@@ -219,6 +220,8 @@ class MilestoneOrchestrator:
         
         # Output control
         self.verbose = False
+        self.whatif = False
+        self.whatif_prompts = []  # Store all prompts for whatif mode
         
         logging.info("Orchestrator initialized successfully")
     
@@ -1274,7 +1277,7 @@ Begin validation now."""
                 os.chdir(worktree_path)
             
             try:
-                validation_result = self.claude_wrapper._execute_claude_command(validation_prompt, 60)
+                validation_result = self.claude_wrapper._execute_claude_command(validation_prompt, 60, context="validation")
                 output = validation_result.get("output", "").strip()
                 
                 if "VALIDATION: COMPLETE" in output:
@@ -1326,7 +1329,7 @@ Begin gap fixing now."""
                 os.chdir(worktree_path)
                 
             try:
-                result = self.claude_wrapper._execute_claude_command(gap_prompt, 300)
+                result = self.claude_wrapper._execute_claude_command(gap_prompt, 300, context="gap_fix")
                 success = self.claude_wrapper._analyze_result(result, task)
                 
                 if success:
@@ -1379,7 +1382,7 @@ Begin comprehensive validation now."""
                 os.chdir(worktree_path)
             
             try:
-                validation_result = self.claude_wrapper._execute_claude_command(validation_prompt, 120)
+                validation_result = self.claude_wrapper._execute_claude_command(validation_prompt, 120, context="validation")
                 output = validation_result.get("output", "").strip()
                 
                 if "MILESTONE_VALIDATION: COMPLETE" in output:
@@ -1452,7 +1455,7 @@ Begin comprehensive gap fixing now."""
                 os.chdir(worktree_path)
                 
             try:
-                result = self.claude_wrapper._execute_claude_command(gap_prompt, 600)  # Longer timeout for comprehensive fix
+                result = self.claude_wrapper._execute_claude_command(gap_prompt, 600, context="gap_fix")  # Longer timeout for comprehensive fix
                 return result.get("success", True)  # Assume success if no error
                     
             finally:
@@ -1618,6 +1621,8 @@ def main():
                       help="Execute specific milestone only")
     parser.add_argument("--dry-run", action="store_true",
                       help="Show execution plan without running")
+    parser.add_argument("--whatif", action="store_true",
+                      help="Capture all prompts and commands without execution (includes failure scenarios)")
     parser.add_argument("--verbose", action="store_true",
                       help="Enable verbose output showing detailed progress")
     parser.add_argument("--reset", action="store_true",
@@ -1633,6 +1638,11 @@ def main():
         # Initialize orchestrator
         orchestrator = MilestoneOrchestrator(args.config)
         orchestrator.verbose = args.verbose
+        orchestrator.whatif = args.whatif
+        
+        # Pass whatif mode to components
+        orchestrator.claude_wrapper.whatif = args.whatif
+        orchestrator.claude_wrapper.orchestrator_prompts = orchestrator.whatif_prompts
         
         # Reset state if requested
         if args.reset:
@@ -1691,6 +1701,37 @@ def main():
         
         # Execute milestones
         success = orchestrator.execute_milestones(milestones)
+        
+        # Output whatif results to file if in whatif mode
+        if args.whatif:
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            whatif_file = f"whatif_prompts_{timestamp}.txt"
+            
+            try:
+                with open(whatif_file, 'w', encoding='utf-8') as f:
+                    f.write("# Claude Code Orchestrator - Whatif Mode Results\n")
+                    f.write(f"# Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"# Milestones: {', '.join([m['id'] for m in milestones])}\n\n")
+                    
+                    for i, prompt_entry in enumerate(orchestrator.whatif_prompts, 1):
+                        f.write(f"## Prompt #{i}\n")
+                        f.write(f"**Context:** {prompt_entry['context']}\n")
+                        f.write(f"**Timestamp:** {prompt_entry['timestamp']}\n")
+                        f.write(f"**Timeout:** {prompt_entry['timeout']}s\n")
+                        if prompt_entry.get('simulated_result'):
+                            f.write(f"**Simulated Result:** {prompt_entry['simulated_result']}\n")
+                        f.write("\n**Command:**\n")
+                        f.write(f"```bash\n{prompt_entry['command']}\n```\n\n")
+                        f.write("**Prompt:**\n")
+                        f.write(f"```\n{prompt_entry['prompt']}\n```\n\n")
+                        f.write("---\n\n")
+                
+                print(f"\nWhatif mode results written to: {whatif_file}")
+                print(f"Total prompts captured: {len(orchestrator.whatif_prompts)}")
+            except Exception as e:
+                print(f"Failed to write whatif results: {e}")
+        
         return 0 if success else 1
         
     except KeyboardInterrupt:

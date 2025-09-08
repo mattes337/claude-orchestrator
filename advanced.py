@@ -23,7 +23,7 @@ import re
 import uuid
 
 # Import shared types to avoid circular imports
-from types_shared import ValidationResult, CodeReviewResult, TaskResult
+from .types_shared import ValidationResult, CodeReviewResult, TaskResult
 
 class RateLimitManager:
     """Manages API rate limiting with intelligent backoff"""
@@ -382,6 +382,11 @@ class ClaudeCodeWrapper:
         self.session_id = None
         self.default_timeout = 300
         
+        # Whatif mode settings
+        self.whatif = False
+        self.orchestrator_prompts = []
+        self.whatif_call_count = {}  # Track calls per method for failure simulation
+        
         # Verify Claude Code is available
         self.is_available = self._check_claude_availability()
         if not self.is_available:
@@ -466,6 +471,36 @@ class ClaudeCodeWrapper:
     
     def _prepare_task_prompt(self, task: Dict[str, Any]) -> str:
         """Prepare Claude Code prompt for task"""
+        # Check if this is a Claude-driven task with raw milestone content
+        if task.get('claude_driven') and 'milestone_content' in task:
+            milestone_content = task['milestone_content']
+            task_title = task.get('title', 'Milestone Implementation')
+            
+            prompt = f"""Please implement the following milestone specification:
+
+{task_title}
+
+=== MILESTONE SPECIFICATION ===
+{milestone_content}
+=== END MILESTONE SPECIFICATION ===
+
+INSTRUCTIONS:
+1. Read and understand the complete milestone specification above
+2. Analyze the current project structure to understand how to implement this milestone
+3. Create all necessary files, code, configuration, tests, and documentation to fulfill this milestone
+4. You MUST create actual files using Write, Edit, or MultiEdit tools - do not just provide examples
+5. Follow the acceptance criteria exactly as specified in the milestone
+6. Use appropriate project structure and naming conventions
+7. Implement everything needed to complete this milestone successfully
+
+The milestone content above contains all the requirements, acceptance criteria, and context you need. 
+Implement it completely using the available tools.
+
+Begin implementation now."""
+            
+            return prompt
+        
+        # Original format for backward compatibility
         task_title = task['title']
         requirements = task.get('requirements', 'No specific requirements provided')
         acceptance_criteria = task.get('acceptance_criteria', 'No specific criteria provided')
@@ -496,44 +531,25 @@ SPECIFIC ACTIONS REQUIRED:
 - If this involves tests, create test files in the appropriate test directory
 - If this involves documentation, create or update relevant documentation files
 
-MCP SERVERS AVAILABLE:
-Use the following MCP servers when appropriate for enhanced capabilities:
-
-🔍 CONTEXT7 MCP - For documentation and research:
-- Use when you need to consult documentation or research best practices
-- Helpful for understanding project context and standards
-- Use for gathering information about frameworks, libraries, and patterns
-
-🎭 PLAYWRIGHT MCP - For browser testing and E2E testing:
-- Use when implementing testing functionality
-- Essential for UI testing, browser automation, and end-to-end tests
-- Use for creating test scenarios and validating user interactions
-
-🎨 ACETERNITY MCP - For UI design and components:
-- Use when creating UI components or styling
-- Provides modern design patterns and component libraries
-- Use for implementing responsive layouts and beautiful interfaces
-
 IMPLEMENTATION STEPS:
 1. Analyze the current project structure using available tools
-2. Determine which MCP servers would be most helpful for this task
-3. Use relevant MCP servers for research, testing, or design guidance
-4. Determine the exact file paths needed for implementation
-5. Create or modify files using Write/Edit/MultiEdit tools
-6. Ensure all created files follow the project's conventions and structure
-7. If implementing UI components, leverage Aceternity MCP for modern designs
-8. If implementing testing, use Playwright MCP for comprehensive test coverage
-9. Use Context7 MCP for documentation consultation when needed
-10. Verify that your implementation meets all requirements and acceptance criteria
+2. Determine the exact file paths needed for implementation
+3. Create or modify files using Write/Edit/MultiEdit tools
+4. Ensure all created files follow the project's conventions and structure
+5. Verify that your implementation meets all requirements and acceptance criteria
 
 IMPORTANT: This task will ONLY be marked as successful if you actually create or modify files. Simply acknowledging the task or providing code snippets without creating files will result in task failure.
 
-Begin implementation now using the appropriate file creation tools and MCP servers."""
+Begin implementation now using the appropriate file creation tools."""
         
         return prompt
     
-    def _execute_claude_command(self, prompt: str, timeout: int) -> Dict[str, Any]:
+    def _execute_claude_command(self, prompt: str, timeout: int, context: str = "unknown") -> Dict[str, Any]:
         """Execute Claude Code command with prompt"""
+        # Handle whatif mode - capture prompts without execution
+        if self.whatif:
+            return self._handle_whatif_execution(prompt, timeout, context)
+        
         try:
             # Write prompt to temporary file
             with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
@@ -592,6 +608,73 @@ Begin implementation now using the appropriate file creation tools and MCP serve
                 "error": str(e)
             }
     
+    def _handle_whatif_execution(self, prompt: str, timeout: int, context: str) -> Dict[str, Any]:
+        """Handle whatif mode - capture prompts and simulate responses with failure scenarios"""
+        # Track calls to simulate failures
+        self.whatif_call_count[context] = self.whatif_call_count.get(context, 0) + 1
+        call_number = self.whatif_call_count[context]
+        
+        # Create prompt capture entry
+        prompt_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "context": context,
+            "call_number": call_number,
+            "timeout": timeout,
+            "current_directory": os.getcwd(),
+            "prompt": prompt,
+            "command_would_be": f"{self.claude_path} --print [PROMPT_CONTENT]"
+        }
+        
+        # Simulate failure on first call for certain contexts (for retry testing)
+        simulate_failure = False
+        failure_contexts = ["milestone_validation", "code_review", "gap_fix"]
+        
+        if any(fc in context.lower() for fc in failure_contexts) and call_number == 1:
+            simulate_failure = True
+            prompt_entry["simulated_outcome"] = "FAILURE (first attempt - to test retry logic)"
+            prompt_entry["simulated_reason"] = f"Simulated failure for {context} to test retry and gap-fixing logic"
+        else:
+            prompt_entry["simulated_outcome"] = "SUCCESS"
+            prompt_entry["simulated_reason"] = f"Normal success simulation for {context}"
+        
+        # Store the prompt
+        self.orchestrator_prompts.append(prompt_entry)
+        
+        # Return simulated response
+        if simulate_failure:
+            if "validation" in context.lower():
+                return {
+                    "returncode": 0,
+                    "output": f"VALIDATION: INCOMPLETE - Missing implementation of key components for testing retry logic (simulated failure #{call_number})",
+                    "error": ""
+                }
+            elif "review" in context.lower():
+                return {
+                    "returncode": 0,
+                    "output": f"Code review found issues: Missing tests, incomplete implementation (simulated failure #{call_number})",
+                    "error": ""
+                }
+            else:
+                return {
+                    "returncode": 1,
+                    "output": "",
+                    "error": f"Simulated execution failure for testing (attempt #{call_number})"
+                }
+        else:
+            # Simulate success
+            if "validation" in context.lower():
+                return {
+                    "returncode": 0,
+                    "output": f"VALIDATION: COMPLETE - All requirements fully implemented (simulated success #{call_number})",
+                    "error": ""
+                }
+            else:
+                return {
+                    "returncode": 0,
+                    "output": f"Task completed successfully (simulated success #{call_number})",
+                    "error": ""
+                }
+    
     def _analyze_result(self, result: Dict[str, Any], task: Dict[str, Any]) -> bool:
         """Analyze Claude Code execution result"""
         if result["returncode"] != 0:
@@ -631,83 +714,6 @@ Begin implementation now using the appropriate file creation tools and MCP serve
         
         # Otherwise, assume success if the command completed without error
         return len(output.strip()) > 0
-    
-    def execute_milestone_directly(self, milestone_content: str, milestone_id: str, timeout: int = 300) -> 'TaskResult':
-        """Execute a milestone directly by sending the full milestone content to Claude"""
-        from types_shared import TaskResult
-        
-        if not self.is_available:
-            error_msg = f"Claude Code CLI not available at path: {self.claude_path}"
-            logging.error(error_msg)
-            return TaskResult(
-                milestone_id, False, 
-                error=error_msg
-            )
-        
-        start_time = time.time()
-        
-        try:
-            # Prepare milestone prompt for Claude
-            prompt = f"""
-You are tasked with implementing the following milestone for the travelflow-backend project. 
-Please analyze the milestone requirements and implement all necessary changes.
-
-MILESTONE CONTENT:
-{milestone_content}
-
-Please:
-1. Read and understand the milestone requirements
-2. Implement all necessary code, configuration, and setup
-3. Follow the acceptance criteria specified in the milestone
-4. Create any required files and directories
-5. Ensure all dependencies are properly configured
-6. Test that the implementation works as expected
-
-Work within the current directory and implement the milestone completely.
-"""
-            
-            try:
-                # Execute Claude Code command with the milestone prompt
-                result = self._execute_claude_command(prompt, timeout)
-                
-                # Analyze result - for milestone execution, we assume success if Claude completed
-                success = result.returncode == 0 and len(result.stdout.strip()) > 0
-                
-                execution_time = time.time() - start_time
-                logging.info(f"Milestone {milestone_id} executed in {execution_time:.2f}s")
-                
-                if success:
-                    return TaskResult(
-                        milestone_id, True,
-                        output=result.stdout,
-                        execution_time=execution_time
-                    )
-                else:
-                    return TaskResult(
-                        milestone_id, False,
-                        error=result.stderr or "Unknown error during milestone execution",
-                        output=result.stdout,
-                        execution_time=execution_time
-                    )
-                    
-            except subprocess.TimeoutExpired:
-                error_msg = f"Milestone {milestone_id} execution timed out after {timeout} seconds"
-                logging.error(error_msg)
-                return TaskResult(
-                    milestone_id, False,
-                    error=error_msg,
-                    execution_time=timeout
-                )
-                
-        except Exception as e:
-            execution_time = time.time() - start_time
-            error_msg = f"Error executing milestone {milestone_id}: {str(e)}"
-            logging.error(error_msg)
-            return TaskResult(
-                milestone_id, False,
-                error=error_msg,
-                execution_time=execution_time
-            )
 
 class MilestoneValidator:
     """Validates milestone structure and completion"""
