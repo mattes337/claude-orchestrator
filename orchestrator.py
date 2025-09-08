@@ -110,7 +110,7 @@ def get_safe_unicode_string(text, fallback_symbols=None):
 class OrchestratorState:
     """Manages orchestrator state and persistence"""
     
-    def __init__(self, state_file: str = "orchestrator_state.json"):
+    def __init__(self, state_file: str = ".orchestrator/orchestrator_state.json"):
         self.state_file = state_file
         self.state = {
             "current_stage": 0,
@@ -184,6 +184,8 @@ class MilestoneOrchestrator:
     """Main orchestrator class for milestone execution"""
     
     def __init__(self, config_path: str = "orchestrator.config.json"):
+        # Ensure .orchestrator directory exists
+        Path(".orchestrator").mkdir(exist_ok=True)
         self.config = self.load_config(config_path)
         
         # Override base_branch with current branch
@@ -331,7 +333,7 @@ class MilestoneOrchestrator:
             "%(asctime)s - %(name)s - %(levelname)s - %(message)s")
         
         # File handler
-        file_handler = logging.FileHandler("orchestrator.log")
+        file_handler = logging.FileHandler(".orchestrator/orchestrator.log")
         file_handler.setLevel(log_level)
         file_handler.setFormatter(logging.Formatter(log_format))
         
@@ -1307,10 +1309,10 @@ class MilestoneOrchestrator:
                 "execution_log": self.state.state.get("execution_log", [])
             }
             
-            with open("execution_report.json", "w") as f:
+            with open(".orchestrator/execution_report.json", "w") as f:
                 json.dump(report, f, indent=2, default=str)
             
-            logging.info("Final execution report generated: execution_report.json")
+            logging.info("Final execution report generated: .orchestrator/execution_report.json")
             
         except Exception as e:
             logging.error(f"Failed to generate final report: {e}")
